@@ -45,6 +45,16 @@ A possible workflow for this use case might look like this.
 
 6. Rebuild the video track using only the unique slides and the recorded timestamps, drastically reducing the number of frames and therefore the file size :D
 
+### Room for optimizations
+
+There are many opportunities to make each process more efficient. Take the frame-extraction stage, for example.
+
+If the content type is known to be a slide presentation, it may not be necessary to extract every single frame. Instead of processing each of the 60 frames per second, we could sample every 12th frame (or any other ratio). If the user accepts a small loss of synchronization accuracy, the slide transition might occur within at most 11 frames of the detected moment. For a presenter advancing slides manually, that trade-off can drastically improve performance.
+
+Another idea would be to use a dichotomy strategy to detect slide changes. As long as the presenter does not go backward to a previous slide, this would efficiently pinpoint change moments with very few frame reads. The downside is determining the exact timestamps of each slide, which may make this approach less accurate for reconstruction. However, if the goal is simply to extract all unique slides as images, without caring about the timeline, this method could be extremely fast.
+
+To sum up, the more the workflow understands the expected content, the more opportunities exist to optimize it :D
+
 ## And what about the audio track?
 
 Since presentations typically involve speech only, encoding the audio using Opus (around 40 kbps) can produce a huge reduction in size with virtually no audible loss in quality.
