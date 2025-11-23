@@ -1,6 +1,7 @@
 """Console script for compression_suite."""
 
 import logging
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -8,10 +9,16 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
-from compression_suite.optimize_slides_recording.main import main as optimize_slides_recording_main
+from compression_suite.extract_unique_frames.main import main as extract_unique_frames_main
 
 app = typer.Typer()
 console = Console()
+
+
+class OutputFormat(str, Enum):
+    """Output format options."""
+    MULTIFRAME_WEBP = "multiframe-webp"
+    PNG = "png"
 
 
 def setup_logging(verbose: bool = False):
@@ -31,21 +38,20 @@ def version():
 
 
 @app.command()
-def optimize_slides_recording(
+def extract_unique_frames(
     input_file: str = typer.Argument(..., help="Path to the input video file"),
-    output_file: str = typer.Argument(..., help="Path to the output video file"),
-    audio: Optional[str] = typer.Option(
-        None, "--audio", "-a", help="Audio encoding: 'codec' or 'codec:bitrate' (e.g., 'aac', 'aac:128k'). If not specified, audio will be copied from source."
-    ),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite output file if it exists"),
+    output_folder: str = typer.Argument(..., help="Path to the output folder"),
+    output_format: OutputFormat = typer.Option(OutputFormat.MULTIFRAME_WEBP, "--output-format", "-f", help="Output format: 'multiframe-webp' (single multi-frame WebP file) or 'png' (individual PNG files)"),
+    no_mpdecimate: bool = typer.Option(False, "--no-mpdecimate", help="Disable mpdecimate filter (process all frames)"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output folder if it exists and is not empty"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """
-    Optimize a slides recording by removing duplicate frames.
+    Extract unique frames from a video recording.
 
-    This command analyzes a video recording of slides and removes consecutive
-    duplicate frames, significantly reducing file size while preserving the
-    original audio and timing.
+    This command analyzes a video recording of frames and extracts unique frames
+    using FFmpeg's mpdecimate filter followed by perceptual hashing to remove
+    consecutive duplicates. Outputs frames and metadata.json to a folder.
     """
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
@@ -60,37 +66,24 @@ def optimize_slides_recording(
         console.print(f"[bold red]Error:[/bold red] Input path is not a file: {input_file}")
         raise typer.Exit(code=1)
 
-    # Validate output file
-    output_path = Path(output_file)
-    if output_path.exists() and not force:
-        console.print(
-            f"[bold red]Error:[/bold red] Output file already exists: {output_file}\n"
-            f"Use --force/-f to overwrite it."
-        )
-        raise typer.Exit(code=1)
-
-    # Check if output directory exists
-    if output_path.parent != Path(".") and not output_path.parent.exists():
-        console.print(f"[bold red]Error:[/bold red] Output directory does not exist: {output_path.parent}")
-        raise typer.Exit(code=1)
-
-    # Parse audio parameter
-    audio_codec:str|None = None
-    audio_bitrate:str|None = None
-    if audio:
-        parts = audio.split(":", 1)
-        audio_codec = parts[0]
-        if len(parts) > 1:
-            audio_bitrate = parts[1]
-
-        if not audio_codec:
-            console.print(f"[bold red]Error:[/bold red] Invalid audio format: {audio}")
+    # Validate output folder
+    output_path = Path(output_folder)
+    if output_path.exists() and output_path.is_dir():
+        # Check if folder is not empty
+        if any(output_path.iterdir()) and not overwrite:
+            console.print(
+                f"[bold red]Error:[/bold red] Output folder is not empty: {output_folder}\n"
+                f"Use --overwrite to overwrite existing files."
+            )
             raise typer.Exit(code=1)
 
+    use_webp = output_format == OutputFormat.MULTIFRAME_WEBP
+    use_mpdecimate = not no_mpdecimate
+
     try:
-        logger.info(f"Starting optimization of: {input_file}")
-        optimize_slides_recording_main(input_file, output_file, audio_codec, audio_bitrate)
-        console.print(f"\n[bold green]✓ Success![/bold green] Output saved to: {output_file}")
+        logger.info(f"Extracting frames from: {input_file}")
+        extract_unique_frames_main(input_file, output_folder, use_webp, use_mpdecimate)
+        console.print(f"\n[bold green]✓ Success![/bold green] Frames saved to: {output_folder}")
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Interrupted by user[/bold yellow]")
         raise typer.Exit(code=130)

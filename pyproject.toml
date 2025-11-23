@@ -14,6 +14,7 @@ classifiers = [
 ]
 license = {text = "MIT"}
 dependencies = [
+  "ffmpeg-python>=0.2.0",
   "imagehash>=4.3.2",
   "numpy>=2.2.6",
   "pillow>=12.0.0",

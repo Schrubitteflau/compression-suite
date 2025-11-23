@@ -1,4 +1,5 @@
 # From https://github.com/github/gitignore/blob/main/Python.gitignore 2025-07-30
+testfiles
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

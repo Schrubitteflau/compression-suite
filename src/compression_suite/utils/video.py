@@ -1,9 +1,8 @@
-import json
 import logging
-import subprocess
 import sys
 from typing import Any
 
+import ffmpeg
 from pydantic import BaseModel, Field, field_validator
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -21,31 +20,12 @@ class VideoInfo(BaseModel):
 
 
 def get_video_info(filename: str) -> VideoInfo:
-    """
-    Extract video information using ffprobe.
-
-    Args:
-        filename: Path to the video file
-
-    Returns:
-        VideoInfo: Validated video information
-
-    Raises:
-        SystemExit: If ffprobe fails or video info cannot be extracted
-    """
     try:
-        result: subprocess.CompletedProcess[str] = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height,r_frame_rate,pix_fmt,duration,nb_frames",
-             "-of", "json", filename],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        info: Any = json.loads(result.stdout)
-        stream: Any = info['streams'][0]
+        # Use ffmpeg.probe to get video information
+        probe = ffmpeg.probe(filename, select_streams='v:0')
+        stream: Any = probe['streams'][0]
 
-        # Parse frame rate first
+        # Parse frame rate
         fps_str = stream['r_frame_rate']
         if isinstance(fps_str, str) and '/' in fps_str:
             num, denom = map(int, fps_str.split('/'))
@@ -58,8 +38,8 @@ def get_video_info(filename: str) -> VideoInfo:
             height=stream['height'],
             pix_fmt=stream['pix_fmt'],
             fps=fps_value,
-            duration=stream['duration'],
-            frame_count=stream['nb_frames'],
+            duration=float(stream['duration']),
+            frame_count=int(stream['nb_frames']),
         )
 
         duration_str = f", {video_info.duration:.2f}s" if video_info.duration > 0 else ""
