@@ -17,6 +17,7 @@ import imagehash
 import numpy as np
 from PIL import Image
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
+from rich.console import Console
 
 from compression_suite.utils.video import get_video_info
 
@@ -127,20 +128,24 @@ def extract_unique_frames_to_folder(
 
     logger.info("Extracting and deduplicating frames...")
 
-    # Create progress bar based on video duration
+    console = Console()
+
+    # Create progress bar based on video duration with live counters
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
+        console=console,
     ) as progress:
-        task = progress.add_task("Processing video...", total=video_info.duration)
+        # Main progress bar
+        main_task = progress.add_task("Processing video...", total=video_info.duration)
 
         try:
             while True:
                 raw_frame = frame_extraction_process.stdout.read(frame_size)
                 if len(raw_frame) < frame_size:
-                    progress.update(task, completed=video_info.duration)
+                    progress.update(main_task, completed=video_info.duration)
                     break
 
                 frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((video_info.height, video_info.width, 3))
@@ -154,11 +159,11 @@ def extract_unique_frames_to_folder(
                 frame_info.hash = current_hash
                 frames_processed += 1
 
-                # Update progress bar: if timestamp is not available for this frame, use the previous one, it'll still be a good estimate
+                # Update main progress bar: if timestamp is not available for this frame, use the previous one, it'll still be a good estimate
                 if frame_info.timestamp is not None:
-                    progress.update(task, completed=frame_info.timestamp)
+                    progress.update(main_task, completed=frame_info.timestamp)
                 elif previous_frame_info is not None:
-                    progress.update(task, completed=previous_frame_info.timestamp)
+                    progress.update(main_task, completed=previous_frame_info.timestamp)
 
                 previous_hash = None if previous_frame_info is None else previous_frame_info.hash
 
@@ -170,6 +175,13 @@ def extract_unique_frames_to_folder(
                     # Store image if we haven't seen this hash before
                     if current_hash not in unique_images:
                         unique_images[current_hash] = img
+
+                # Update progress description with live stats
+                current_time = progress.tasks[0].completed if progress.tasks else 0
+                progress.update(
+                    main_task,
+                    description=f"[cyan]{len(all_frames)} processed frames[/cyan] [yellow]{len(unique_frames)} distinct[/yellow] [green]{len(unique_images)} unique images[/green] [dim]({current_time:.1f}s / {video_info.duration:.1f}s)[/dim]"
+                )
 
                 previous_frame_info = frame_info
 
