@@ -16,6 +16,7 @@ import ffmpeg
 import imagehash
 import numpy as np
 from PIL import Image
+from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
 
 from compression_suite.utils.video import get_video_info
 
@@ -28,7 +29,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExtractedFrameInfo:
     """Information about an extracted frame."""
-    image: Image.Image | None = None  # None after we've saved it to free memory
     hash: imagehash.ImageHash | None = None
     timestamp: float | None = None  # Will be set by timestamp thread
 
@@ -94,7 +94,7 @@ def extract_unique_frames_to_folder(
     all_frames: List[ExtractedFrameInfo] = []
     unique_frames: List[ExtractedFrameInfo] = []
     unique_images: Dict[imagehash.ImageHash, Image.Image] = {}
-    previous_hash: imagehash.ImageHash | None = None
+    previous_frame_info: ExtractedFrameInfo | None = None
 
     try:
         # Build FFmpeg pipeline
@@ -127,42 +127,56 @@ def extract_unique_frames_to_folder(
 
     logger.info("Extracting and deduplicating frames...")
 
-    try:
-        while True:
-            raw_frame = frame_extraction_process.stdout.read(frame_size)
-            if len(raw_frame) < frame_size:
-                break
+    # Create progress bar based on video duration
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Processing video...", total=video_info.duration)
 
-            frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((video_info.height, video_info.width, 3))
-            img: Image.Image = Image.fromarray(frame)
+        try:
+            while True:
+                raw_frame = frame_extraction_process.stdout.read(frame_size)
+                if len(raw_frame) < frame_size:
+                    progress.update(task, completed=video_info.duration)
+                    break
 
-            # Compute hash
-            current_hash = compute_hash(img)
+                frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((video_info.height, video_info.width, 3))
+                img: Image.Image = Image.fromarray(frame)
 
-            # Get or create frame info for this frame
-            frame_info = get_frame_info(all_frames, frames_processed)
-            frame_info.image = img
-            frame_info.hash = current_hash
-            frames_processed += 1
+                # Compute hash
+                current_hash = compute_hash(img)
 
-            # Check if different from previous frame
-            if is_different_from_previous(current_hash, previous_hash):
-                print(f"{frames_processed} frames processed, ts {frame_info.timestamp}")
-                # This is a frame change
-                unique_frames.append(frame_info)
+                # Get or create frame info for this frame
+                frame_info = get_frame_info(all_frames, frames_processed)
+                frame_info.hash = current_hash
+                frames_processed += 1
 
-                # Store image if we haven't seen this hash before
-                if current_hash not in unique_images:
-                    unique_images[current_hash] = img
+                # Update progress bar: if timestamp is not available for this frame, use the previous one, it'll still be a good estimate
+                if frame_info.timestamp is not None:
+                    progress.update(task, completed=frame_info.timestamp)
+                elif previous_frame_info is not None:
+                    progress.update(task, completed=previous_frame_info.timestamp)
 
-            # Always drop image reference - unique images are in the dict
-            frame_info.image = None
-            previous_hash = current_hash
+                previous_hash = None if previous_frame_info is None else previous_frame_info.hash
 
-    except Exception as e:
-        logger.error(f"Error during frame processing: {e}")
-        frame_extraction_process.kill()
-        sys.exit(1)
+                # Check if different from previous frame
+                if is_different_from_previous(current_hash, previous_hash):
+                    # This is a frame change
+                    unique_frames.append(frame_info)
+
+                    # Store image if we haven't seen this hash before
+                    if current_hash not in unique_images:
+                        unique_images[current_hash] = img
+
+                previous_frame_info = frame_info
+
+        except Exception as e:
+            logger.error(f"Error during frame processing: {e}")
+            frame_extraction_process.kill()
+            sys.exit(1)
 
     frame_extraction_process.wait()
     ts_thread.join()
