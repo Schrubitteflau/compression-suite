@@ -73,6 +73,37 @@ As of now, this project is more an idea than anything else. No workflows, no sma
 
 Voilà 😉
 
+# Current usage examples
+
+## Complete workflow for a presentation video
+
+```bash
+# Extract the unique frames to a folder
+uv run compression_suite extract-unique-frames mypresentation.mp4 ./mypresentation-lightweight --output-format multiframe-webp
+
+# Extract the audio track - opus format with 32k bitrate is chosen here because it's a great compromise between size and quality for human voices
+ffmpeg -i mypresentation.mp4 -map a:0 -c:a libopus -b:a 32k ./mypresentation-lightweight/audio.opus
+
+# You can reassemble the video from the extracted frames with the audio track when you want to watch it again
+uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus
+```
+
+## Additional options
+
+```bash
+# Extract frames as individual PNGs instead of a single WebP file
+uv run compression_suite extract-unique-frames video.mp4 ./frames --output-format png
+
+# Reassemble with custom encoding settings
+uv run compression_suite reassemble-video ./frames output.mp4 --crf 20 --preset slow
+
+# View all options
+uv run compression_suite extract-unique-frames --help
+uv run compression_suite reassemble-video --help
+```
+
 ## Credits
 
 This package was created with [Cookiecutter](https://github.com/audreyfeldroy/cookiecutter) and the [audreyfeldroy/cookiecutter-pypackage](https://github.com/audreyfeldroy/cookiecutter-pypackage) project template.
+
+[ffmpeg](https://www.ffmpeg.org/) is fantastic.
