@@ -85,7 +85,14 @@ uv run compression_suite extract-unique-frames mypresentation.mp4 ./mypresentati
 ffmpeg -i mypresentation.mp4 -map a:0 -c:a libopus -b:a 32k ./mypresentation-lightweight/audio.opus
 
 # You can reassemble the video from the extracted frames with the audio track when you want to watch it again
-uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus
+
+# Option 1: VFR mode (variable framerate) - most lightweight, pixel-perfect reconstruction
+# Stores only unique frames with exact timing. Best for archival and minimal file size.
+uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus --mode vfr
+
+# Option 2: CFR mode (constant framerate) - better player compatibility
+# Duplicates frames to maintain constant framerate. Larger file size, but plays smoothly in VLC and most players.
+uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus --mode cfr --fps 25
 ```
 
 ## Additional options
@@ -94,13 +101,24 @@ uv run compression_suite reassemble-video ./mypresentation-lightweight mypresent
 # Extract frames as individual PNGs instead of a single WebP file
 uv run compression_suite extract-unique-frames video.mp4 ./frames --output-format png
 
-# Reassemble with custom encoding settings
-uv run compression_suite reassemble-video ./frames output.mp4 --crf 20 --preset slow
+# Reassemble with custom encoding settings and CFR mode at 30 fps
+uv run compression_suite reassemble-video ./frames output.mp4 --crf 20 --preset slow --mode cfr --fps 30
+
+# Reassemble with VFR mode (default) - most compact file
+uv run compression_suite reassemble-video ./frames output.mp4
 
 # View all options
 uv run compression_suite extract-unique-frames --help
 uv run compression_suite reassemble-video --help
 ```
+
+## Technical Notes
+
+### Performance Optimizations
+
+**CFR Mode Symlinks**: To maximize performance, CFR mode uses symlinks for duplicate frames rather than writing the same image multiple times to disk. Each unique frame is written once, and symlinks are created for all duplicates. This dramatically reduces I/O overhead and makes CFR mode nearly as fast as VFR mode.
+
+**Frame Piping**: Direct frame piping to FFmpeg via stdin is not currently implemented for video reconstruction. The current approach uses temporary files (with symlinks for efficiency in CFR mode) which provides a good balance of simplicity, reliability, and performance.
 
 ## Credits
 
