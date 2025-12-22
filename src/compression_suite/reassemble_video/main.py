@@ -11,40 +11,15 @@ from typing import List, Literal
 
 import ffmpeg
 from PIL import Image
-from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
+
+from compression_suite.models.metadata import Metadata, TimestampInfo, VideoInfo
 
 logger = logging.getLogger(__name__)
 
 # Type definitions
 FrameMode = Literal["vfr", "cfr"]
-
-
-# Pydantic models for metadata validation
-class TimestampInfo(BaseModel):
-    """Information about a frame timestamp."""
-    timestamp: float
-    hash: str
-    image_index: int
-
-
-class VideoInfo(BaseModel):
-    """Original video information."""
-    width: int
-    height: int
-    fps: float
-    duration: float
-
-
-class Metadata(BaseModel):
-    """Metadata for extracted frames."""
-    version: str
-    frame_changes_count: int
-    unique_images_count: int
-    timestamps: List[TimestampInfo]
-    format: Literal["webp", "png"]
-    video_info: VideoInfo
 
 
 def load_metadata(folder_path: Path) -> Metadata:

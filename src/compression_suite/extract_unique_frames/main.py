@@ -3,7 +3,6 @@
 Extract unique frames from frames recording using mpdecimate and perceptual hashing
 """
 
-import json
 import logging
 import re
 import sys
@@ -19,6 +18,7 @@ from PIL import Image
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
 from rich.console import Console
 
+from compression_suite.models.metadata import Metadata, TimestampInfo, VideoInfo
 from compression_suite.utils.video import get_video_info
 
 HASH_THRESHOLD = 5
@@ -200,14 +200,14 @@ def extract_unique_frames_to_folder(
     # Build metadata with timestamps and hash references
     logger.info("Building metadata...")
     hash_to_index = {hash_val: i for i, hash_val in enumerate(unique_images.keys())}
-    timestamps_data = []
-
-    for frame_info in unique_frames:
-        timestamps_data.append({
-            "timestamp": frame_info.timestamp,
-            "hash": str(frame_info.hash),
-            "image_index": hash_to_index[frame_info.hash]
-        })
+    timestamps_data = [
+        TimestampInfo(
+            timestamp=frame_info.timestamp,
+            hash=str(frame_info.hash),
+            image_index=hash_to_index[frame_info.hash]
+        )
+        for frame_info in unique_frames
+    ]
 
     # Save unique images
     if use_webp:
@@ -238,23 +238,23 @@ def extract_unique_frames_to_folder(
                 saved_count += 1
         logger.info(f"Saved {saved_count} new images ({len(unique_images) - saved_count} already existed)")
 
-    # Save metadata
-    metadata = {
-        "version": "1.0",
-        "frame_changes_count": len(unique_frames),
-        "unique_images_count": len(unique_images),
-        "timestamps": timestamps_data,
-        "format": "webp" if use_webp else "png",
-        "video_info": {
-            "width": video_info.width,
-            "height": video_info.height,
-            "fps": video_info.fps,
-            "duration": video_info.duration
-        }
-    }
+    # Save metadata using Pydantic model
+    metadata = Metadata(
+        version="1.0",
+        frame_changes_count=len(unique_frames),
+        unique_images_count=len(unique_images),
+        timestamps=timestamps_data,
+        format="webp" if use_webp else "png",
+        video_info=VideoInfo(
+            width=video_info.width,
+            height=video_info.height,
+            fps=video_info.fps,
+            duration=video_info.duration
+        )
+    )
     metadata_path = output_path / "metadata.json"
     with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
+        f.write(metadata.model_dump_json(indent=2))
 
     logger.info(f"Saved metadata to {metadata_path}")
     logger.info("Done!")
