@@ -14,7 +14,7 @@ from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
 
-from compression_suite.models.metadata import Metadata, TimestampInfo, VideoInfo
+from compression_suite.models.metadata import Metadata, TimestampInfo
 
 logger = logging.getLogger(__name__)
 
