@@ -102,6 +102,8 @@ def reassemble_video(
     video_codec: str = typer.Option("libx264", "--codec", "-c", help="FFmpeg video codec (default: libx264)"),
     crf: int = typer.Option(23, "--crf", help="Constant Rate Factor for quality (0-51, lower is better, default: 23)"),
     preset: str = typer.Option("medium", "--preset", "-p", help="Encoding preset (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)"),
+    mode: str = typer.Option("vfr", "--mode", "-m", help="Frame rate mode: 'vfr' (variable, most accurate) or 'cfr' (constant, better player compatibility)"),
+    fps: float = typer.Option(25.0, "--fps", help="Target framerate for CFR mode (default: 25.0)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """
@@ -109,6 +111,9 @@ def reassemble_video(
 
     This command takes a folder created by extract-unique-frames (containing frames
     and metadata.json) and rebuilds the video, optionally adding an audio track.
+
+    Use --mode vfr (default) for pixel-perfect reconstruction with variable framerate,
+    or --mode cfr with --fps to force a constant framerate for better player compatibility.
     """
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
@@ -135,9 +140,14 @@ def reassemble_video(
             console.print(f"[bold red]Error:[/bold red] Audio file does not exist: {audio_file}")
             raise typer.Exit(code=1)
 
+    # Validate mode parameter
+    if mode != "vfr" and mode != "cfr":
+        console.print(f"[bold red]Error:[/bold red] Invalid mode '{mode}'. Must be 'vfr' or 'cfr'")
+        raise typer.Exit(code=1)
+
     try:
         logger.info(f"Reassembling video from: {frames_folder}")
-        reassemble_video_main(frames_folder, output_file, audio_file, video_codec, crf, preset)
+        reassemble_video_main(frames_folder, output_file, audio_file, video_codec, crf, preset, mode, fps)
         console.print(f"\n[bold green]✓ Success![/bold green] Video saved to: {output_file}")
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Interrupted by user[/bold yellow]")
