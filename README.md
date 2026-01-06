@@ -6,6 +6,40 @@ Automatically chooses the best compression and processing pipeline based on the 
 
 The main idea is to build a content-aware multimedia compression and processing toolbox, fully configurable through human-readable workflows and pipelines defined in formats like YAML.
 
+# Getting started
+
+## Prerequisites
+
+1. **Python 3.10+**: Download from [python.org](https://www.python.org/) or let `uv` install it for you
+2. **uv**: A fast Python package manager - [installation guide](https://docs.astral.sh/uv/guides/install-python/)
+3. **FFmpeg**: Required for video/audio processing - [download FFmpeg](https://ffmpeg.org/download.html)
+    - Linux: `sudo apt install ffmpeg` (Ubuntu/Debian) or `sudo dnf install ffmpeg` (Fedora)
+    - macOS: `brew install ffmpeg`
+    - Windows: Download from the official website or use `winget install ffmpeg`
+
+## Installation
+
+1. Clone this repository:
+
+```bash
+git clone https://github.com/yourusername/compression-suite.git
+cd compression-suite
+```
+
+2. Install dependencies with uv:
+
+```bash
+uv sync
+```
+
+3. Verify the installation:
+
+```bash
+uv run compression_suite --help
+```
+
+You should see the available commands listed. For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
+
 # Core concepts
 
 There are two core concepts:
@@ -77,6 +111,8 @@ Voilà 😉
 
 ## Complete workflow for a presentation video
 
+This is ideal for large presentation videos with only a few dozen unique slides but bloated file sizes from constant-framerate recording or inefficient video containers. For long-term storage/archival, you can use either a lightweight reconstructed video file (in VFR mode) or the folder containing the extracted frames, timeline, and audio.
+
 ```bash
 # Extract the unique frames to a folder
 uv run compression_suite extract-unique-frames mypresentation.mp4 ./mypresentation-lightweight --output-format multiframe-webp
@@ -86,13 +122,13 @@ ffmpeg -i mypresentation.mp4 -map a:0 -c:a libopus -b:a 32k ./mypresentation-lig
 
 # You can reassemble the video from the extracted frames with the audio track when you want to watch it again
 
-# Option 1: VFR mode (variable framerate) - most lightweight, pixel-perfect reconstruction
+# Option 1: VFR mode (variable framerate) - most lightweight, timing-perfect reconstruction
 # Stores only unique frames with exact timing. Best for archival and minimal file size.
-uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus --mode vfr
+uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-reconstructed-vfr.mp4 --audio ./mypresentation-lightweight/audio.opus --mode vfr
 
 # Option 2: CFR mode (constant framerate) - better player compatibility
 # Duplicates frames to maintain constant framerate. Larger file size, but plays smoothly in VLC and most players.
-uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-video.mp4 --audio ./mypresentation-lightweight/audio.opus --mode cfr --fps 25
+uv run compression_suite reassemble-video ./mypresentation-lightweight mypresentation-reconstructed-cfr.mp4 --audio ./mypresentation-lightweight/audio.opus --mode cfr --fps 25
 ```
 
 ## Additional options
@@ -119,6 +155,19 @@ uv run compression_suite reassemble-video --help
 **CFR Mode Symlinks**: To maximize performance, CFR mode uses symlinks for duplicate frames rather than writing the same image multiple times to disk. Each unique frame is written once, and symlinks are created for all duplicates. This dramatically reduces I/O overhead and makes CFR mode nearly as fast as VFR mode.
 
 **Frame Piping**: Direct frame piping to FFmpeg via stdin is not currently implemented for video reconstruction. The current approach uses temporary files (with symlinks for efficiency in CFR mode) which provides a good balance of simplicity, reliability, and performance.
+
+## Known Limitations
+
+### VFR Mode: Last Frame May Be Missing
+
+There is a known issue with VFR (Variable Frame Rate) mode where the final slide may not appear in the reconstructed video. The video duration remains correct, but FFmpeg's concat demuxer appears to drop the last frame during encoding despite the concat file being properly formatted.
+
+**Workaround**: Use CFR (Constant Frame Rate) mode instead, which reliably includes all frames:
+```bash
+uv run compression_suite reassemble-video ./frames output.mp4 --mode cfr --fps 25
+```
+
+CFR mode duplicates frames to maintain a constant framerate, resulting in a larger file size but ensuring all slides are present, and with a better player compatibility.
 
 ## Credits
 
