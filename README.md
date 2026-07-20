@@ -137,6 +137,24 @@ uv run compression_suite reassemble-video ./mypresentation-lightweight mypresent
 # Extract frames as individual PNGs instead of a single WebP file
 uv run compression_suite extract-unique-frames video.mp4 ./frames --output-format png
 
+# Ignore a fixed source-pixel rectangle while comparing frames. The rectangle
+# remains visible in saved frames, but motion inside it does not create a new frame.
+uv run compression_suite extract-unique-frames video.mp4 ./frames --ignore-region 0,0,480,720
+
+# Repeat the flag to ignore multiple rectangles.
+uv run compression_suite extract-unique-frames video.mp4 ./frames \
+  --ignore-region 0,0,480,720 \
+  --ignore-region 1100,0,180,100
+
+# Interactively draw ignored rectangles with OpenCV on the video's midpoint frame.
+# Install the optional GUI dependency first: uv sync --extra gui
+uv run compression_suite extract-unique-frames video.mp4 ./frames --manual-select-ignore-region
+
+# Display a specific frame in the interactive selector instead.
+uv run compression_suite extract-unique-frames video.mp4 ./frames \
+  --manual-select-ignore-region \
+  --selection-timestamp 42.5
+
 # Reassemble with custom encoding settings and CFR mode at 30 fps
 uv run compression_suite reassemble-video ./frames output.mp4 --crf 20 --preset slow --mode cfr --fps 30
 
@@ -147,6 +165,13 @@ uv run compression_suite reassemble-video ./frames output.mp4
 uv run compression_suite extract-unique-frames --help
 uv run compression_suite reassemble-video --help
 ```
+
+Comparison exclusions use `X,Y,WIDTH,HEIGHT` coordinates measured from the
+source video's top-left corner. Explicit and manual selection cannot be used
+together. The extracted image remains complete, so an excluded presenter or
+overlay appears frozen between retained presentation changes. New metadata uses
+version 1.1 and records the resolved rectangles as
+`comparison_exclusion_regions`.
 
 ## Technical Notes
 

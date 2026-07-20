@@ -26,6 +26,9 @@ dependencies = [
 requires-python = ">= 3.10"
 
 [project.optional-dependencies]
+gui = [
+    "opencv-python>=4.10",
+]
 test = [
     "coverage",  # testing
     "pytest",  # testing
