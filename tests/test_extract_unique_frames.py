@@ -14,6 +14,7 @@ from compression_suite.extract_unique_frames.main import (
     extract_unique_frames_to_folder,
     is_different_from_previous,
 )
+from compression_suite.extract_unique_frames.manual_selection import snap_rectangle_to_frame_edges
 from compression_suite.models.geometry import PixelRectangle
 from compression_suite.models.metadata import Metadata
 
@@ -57,16 +58,21 @@ def split_screen_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def install_fake_opencv(
     monkeypatch: pytest.MonkeyPatch,
     rectangles: list[tuple[int, int, int, int]],
-) -> None:
+) -> SimpleNamespace:
+    selections = iter(rectangles)
     fake_cv2 = SimpleNamespace(
-        WINDOW_NORMAL=0,
-        WINDOW_KEEPRATIO=0,
+        WINDOW_NORMAL=1,
+        WINDOW_KEEPRATIO=2,
+        WINDOW_GUI_NORMAL=4,
+        named_window_flags=[],
         namedWindow=lambda *_args, **_kwargs: None,
-        selectROIs=lambda *_args, **_kwargs: rectangles,
+        selectROI=lambda *_args, **_kwargs: next(selections, (0, 0, 0, 0)),
         destroyWindow=lambda *_args, **_kwargs: None,
     )
+    fake_cv2.namedWindow = lambda _name, flags: fake_cv2.named_window_flags.append(flags)
     monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
     monkeypatch.setenv("DISPLAY", ":test")
+    return fake_cv2
 
 
 def test_comparison_hash_ignores_changes_inside_excluded_region() -> None:
@@ -105,6 +111,23 @@ def test_version_1_metadata_loads_without_comparison_exclusions() -> None:
     )
 
     assert metadata.comparison_exclusion_regions == []
+
+
+def test_manual_selection_snaps_nearby_edges_to_frame_boundaries() -> None:
+    selected_region = PixelRectangle(x=7, y=9, width=116, height=58)
+
+    assert snap_rectangle_to_frame_edges(selected_region, frame_width=128, frame_height=72) == PixelRectangle(
+        x=0,
+        y=0,
+        width=128,
+        height=72,
+    )
+
+
+def test_manual_selection_preserves_edges_outside_snap_tolerance() -> None:
+    selected_region = PixelRectangle(x=11, y=11, width=106, height=50)
+
+    assert snap_rectangle_to_frame_edges(selected_region, frame_width=128, frame_height=72) == selected_region
 
 
 @pytest.mark.parametrize("use_webp", [False, True])
@@ -287,7 +310,7 @@ def test_cli_manual_selection_prints_and_records_resolved_region(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_path = tmp_path / "output"
-    install_fake_opencv(monkeypatch, [(0, 0, 32, 64)])
+    fake_cv2 = install_fake_opencv(monkeypatch, [(0, 0, 32, 64)])
 
     result = CliRunner().invoke(
         app,
@@ -302,12 +325,77 @@ def test_cli_manual_selection_prints_and_records_resolved_region(
             "--selection-timestamp",
             "1.0",
         ],
+        input="n\ny\n",
     )
 
     assert result.exit_code == 0, result.output
     assert "--ignore-region 0,0,32,64" in result.output
+    assert "Add another region?" in result.output
+    assert "Use these regions?" in result.output
+    assert fake_cv2.named_window_flags == [7]
     metadata = Metadata.model_validate_json((output_path / "metadata.json").read_text())
     assert metadata.comparison_exclusion_regions == [PixelRectangle(x=0, y=0, width=32, height=64)]
+
+
+def test_cli_manual_selection_can_retry_before_extraction(
+    tmp_path: Path,
+    split_screen_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "output"
+    install_fake_opencv(monkeypatch, [(5, 5, 20, 20), (0, 0, 32, 64)])
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "extract-unique-frames",
+            str(split_screen_video),
+            str(output_path),
+            "--output-format",
+            "png",
+            "--no-mpdecimate",
+            "--manual-select-ignore-region",
+        ],
+        input="n\nn\nn\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--ignore-region 0,0,25,25" in result.output
+    assert result.output.count("Use these regions?") == 2
+    metadata = Metadata.model_validate_json((output_path / "metadata.json").read_text())
+    assert metadata.comparison_exclusion_regions == [PixelRectangle(x=0, y=0, width=32, height=64)]
+
+
+def test_cli_manual_selection_can_accumulate_multiple_regions(
+    tmp_path: Path,
+    split_screen_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "output"
+    install_fake_opencv(monkeypatch, [(0, 0, 20, 64), (40, 0, 24, 10)])
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "extract-unique-frames",
+            str(split_screen_video),
+            str(output_path),
+            "--output-format",
+            "png",
+            "--no-mpdecimate",
+            "--manual-select-ignore-region",
+        ],
+        input="y\nn\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--ignore-region 0,0,20,64" in result.output
+    assert result.output.count("Selected comparison exclusions:") == 2
+    metadata = Metadata.model_validate_json((output_path / "metadata.json").read_text())
+    assert metadata.comparison_exclusion_regions == [
+        PixelRectangle(x=0, y=0, width=20, height=64),
+        PixelRectangle(x=40, y=0, width=24, height=10),
+    ]
 
 
 def test_cli_manual_selection_cancels_before_creating_output(

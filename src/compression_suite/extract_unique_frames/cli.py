@@ -12,7 +12,7 @@ from rich.logging import RichHandler
 from compression_suite.extract_unique_frames.main import main
 from compression_suite.extract_unique_frames.manual_selection import (
     ManualSelectionCancelled,
-    select_comparison_exclusion_regions,
+    select_comparison_exclusion_region,
 )
 from compression_suite.models.geometry import PixelRectangle
 from compression_suite.utils.cli import cli_error_handler
@@ -60,7 +60,7 @@ def extract_unique_frames(
     manual_select_ignore_region: bool = typer.Option(
         False,
         "--manual-select-ignore-region",
-        help="Interactively select comparison exclusions on a representative video frame",
+        help="Interactively select and confirm comparison exclusions on a representative video frame",
     ),
     selection_timestamp: float | None = typer.Option(
         None,
@@ -112,20 +112,34 @@ def extract_unique_frames(
     if selection_timestamp is not None and not manual_select_ignore_region:
         raise ValueError("--selection-timestamp requires --manual-select-ignore-region")
     if manual_select_ignore_region:
-        try:
-            comparison_exclusion_regions = select_comparison_exclusion_regions(
-                input_file,
-                selection_timestamp,
-            )
-        except ManualSelectionCancelled:
-            console.print("[yellow]Selection cancelled; no output was created.[/yellow]")
-            raise typer.Exit(code=0) from None
+        while True:
+            selected_regions: list[PixelRectangle] = []
+            while True:
+                console.print("Draw one ignored region, then press Space or Enter to accept it.")
+                try:
+                    selected_region = select_comparison_exclusion_region(
+                        input_file,
+                        selection_timestamp,
+                    )
+                except ManualSelectionCancelled:
+                    if selected_regions:
+                        break
+                    console.print("[yellow]Selection cancelled; no output was created.[/yellow]")
+                    raise typer.Exit(code=0) from None
 
-        resolved_flags = " ".join(
-            f"--ignore-region {region.x},{region.y},{region.width},{region.height}"
-            for region in comparison_exclusion_regions
-        )
-        console.print(f"Selected comparison exclusions: {resolved_flags}")
+                selected_regions.append(selected_region)
+                resolved_flags = " ".join(
+                    f"--ignore-region {region.x},{region.y},{region.width},{region.height}"
+                    for region in selected_regions
+                )
+                console.print(f"Selected comparison exclusions: {resolved_flags}")
+                if not typer.confirm("Add another region?", default=False):
+                    break
+
+            if typer.confirm("Use these regions?", default=True):
+                comparison_exclusion_regions = selected_regions
+                break
+            console.print("Select ignored regions again.")
 
     logger.info(f"Extracting frames from: {input_file}")
     main(

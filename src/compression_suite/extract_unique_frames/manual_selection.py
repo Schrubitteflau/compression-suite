@@ -13,10 +13,32 @@ from compression_suite.models.geometry import PixelRectangle
 from compression_suite.utils.video import get_video_info
 
 WINDOW_NAME = "Select ignored regions"
+EDGE_SNAP_TOLERANCE_PIXELS = 10
 
 
 class ManualSelectionCancelled(Exception):
     """Raised when manual selection finishes without any rectangles."""
+
+
+def snap_rectangle_to_frame_edges(
+    region: PixelRectangle,
+    frame_width: int,
+    frame_height: int,
+    tolerance: int = EDGE_SNAP_TOLERANCE_PIXELS,
+) -> PixelRectangle:
+    """Snap rectangle edges that are close to source-frame boundaries."""
+    left = 0 if region.x <= tolerance else region.x
+    top = 0 if region.y <= tolerance else region.y
+    right_gap = frame_width - region.right
+    bottom_gap = frame_height - region.bottom
+    right = frame_width if 0 <= right_gap <= tolerance else region.right
+    bottom = frame_height if 0 <= bottom_gap <= tolerance else region.bottom
+    return PixelRectangle(
+        x=left,
+        y=top,
+        width=right - left,
+        height=bottom - top,
+    )
 
 
 def _load_opencv() -> Any:
@@ -59,11 +81,11 @@ def _decode_video_frame(
     return np.frombuffer(frame_bytes, dtype=np.uint8).reshape((height, width, 3))
 
 
-def select_comparison_exclusion_regions(
+def select_comparison_exclusion_region(
     video_file: str,
     timestamp: float | None = None,
-) -> list[PixelRectangle]:
-    """Select fixed source-pixel rectangles on one representative video frame."""
+) -> PixelRectangle:
+    """Select one fixed source-pixel rectangle on a representative video frame."""
     video_info = get_video_info(video_file)
     selected_timestamp = video_info.duration / 2 if timestamp is None else timestamp
     if not math.isfinite(selected_timestamp):
@@ -85,9 +107,12 @@ def select_comparison_exclusion_regions(
 
     window_created = False
     try:
-        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        cv2.namedWindow(
+            WINDOW_NAME,
+            cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL,
+        )
         window_created = True
-        rectangles = cv2.selectROIs(
+        rectangle = cv2.selectROI(
             WINDOW_NAME,
             frame,
             showCrosshair=True,
@@ -102,11 +127,11 @@ def select_comparison_exclusion_regions(
         if window_created:
             cv2.destroyWindow(WINDOW_NAME)
 
-    regions = [
-        PixelRectangle(x=int(x), y=int(y), width=int(width), height=int(height))
-        for x, y, width, height in rectangles
-        if int(width) > 0 and int(height) > 0
-    ]
-    if not regions:
+    x, y, width, height = (int(value) for value in rectangle)
+    if width <= 0 or height <= 0:
         raise ManualSelectionCancelled
-    return regions
+    return snap_rectangle_to_frame_edges(
+        PixelRectangle(x=x, y=y, width=width, height=height),
+        video_info.width,
+        video_info.height,
+    )
