@@ -173,6 +173,13 @@ overlay appears frozen between retained presentation changes. New metadata uses
 version 1.1 and records the resolved rectangles as
 `comparison_exclusion_regions`.
 
+During manual selection, draw one rectangle and press Space or Enter to accept
+it. The selector closes immediately and the terminal prints the accumulated
+`--ignore-region` flags. Choose whether to add another rectangle, then confirm
+the complete list. Answer `n` at the final confirmation to start the selection
+again, or accept the coordinates to begin extraction. Rectangle edges within
+10 source pixels of a video boundary snap exactly to that boundary.
+
 ## Technical Notes
 
 ### Performance Optimizations
