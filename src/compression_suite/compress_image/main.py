@@ -5,8 +5,9 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import tinify
 from rich.console import Console
@@ -16,6 +17,8 @@ from tinify import ConnectionError as TinifyConnectionError
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.dependencies import check_exiftool
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
+
+T = TypeVar("T")
 
 HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 
@@ -102,8 +105,10 @@ def current_umask() -> int:
     return umask
 
 
-def write_atomically(output_path: Path, data: bytes, finalize: Callable[[Path], None]) -> None:
+def write_atomically(output_path: Path, data: bytes, finalize: Callable[[Path], T]) -> T:
     """Write to a temporary file in the destination folder, post-process it, then rename it.
+
+    Returns what `finalize` returns.
 
     The file gets the permissions a plain write would give (0666 minus the umask), not mkstemp's 0600.
     """
@@ -114,11 +119,17 @@ def write_atomically(output_path: Path, data: bytes, finalize: Callable[[Path], 
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         tmp_path.chmod(0o666 & ~current_umask())
-        finalize(tmp_path)
+        finalized = finalize(tmp_path)
         os.replace(tmp_path, output_path)
+        return finalized
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def iso_mtime(stat: os.stat_result) -> str:
+    """Format a file's mtime as ISO 8601 in UTC, to the microsecond."""
+    return (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=stat.st_mtime_ns // 1000)).isoformat()
 
 
 def compress_image(
@@ -155,11 +166,13 @@ def compress_image(
 
     # Validate input and prepare API call (deferred to avoid burning a credit before checks)
     original_path = None
+    original_stat = None
     if input_file is not None:
         original_path = validate_input_file(input_file)
+        original_stat = original_path.stat()  # before any read, which may refresh the atime
         input_format = detect_file_format(original_path)
         check_format(input_format)
-        input_size = original_path.stat().st_size
+        input_size = original_stat.st_size
         check_size(input_size, disable_hard_limit)
         prepare_source = lambda: tinify.from_file(str(original_path))
     else:
@@ -197,16 +210,25 @@ def compress_image(
         if exiftool_source is not None:
             preserve_metadata(exiftool_source, compressed_path)
 
+    def apply_metadata_and_dates(compressed_path: Path) -> bytes:
+        """Copy the metadata, read the final bytes, then give the file the original's atime and mtime.
+
+        The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
+        """
+        copy_metadata(compressed_path)
+        final_buffer = compressed_path.read_bytes()
+        if original_stat is not None:
+            os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        return final_buffer
+
     try:
         if output_path is not None:
-            write_atomically(output_path, compressed_buffer, copy_metadata)
-            final_buffer = output_path.read_bytes()
+            final_buffer = write_atomically(output_path, compressed_buffer, apply_metadata_and_dates)
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                copy_metadata(tmp_compressed)
-                final_buffer = tmp_compressed.read_bytes()
+                final_buffer = apply_metadata_and_dates(tmp_compressed)
             sys.stdout.buffer.write(final_buffer)
     finally:
         if stdin_original is not None:
@@ -221,11 +243,17 @@ def compress_image(
     console.print(f"[dim]API compressions used this month: {compression_count}[/dim]")
 
     return {
-        "input": {"path": input_file, "format": input_format, "size_bytes": input_size},
+        "input": {
+            "path": input_file,
+            "format": input_format,
+            "size_bytes": input_size,
+            "mtime": iso_mtime(original_stat) if original_stat is not None else None,
+        },
         "output": {
             "path": output,
             "format": detect_format(final_buffer[:HEADER_SIZE]),
             "size_bytes": output_size,
+            "mtime": iso_mtime(output_path.stat()) if output_path is not None else None,
         },
         "tinify": {"compressions_this_month": compression_count},
     }

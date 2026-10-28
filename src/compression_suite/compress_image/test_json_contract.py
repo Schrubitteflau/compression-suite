@@ -94,6 +94,9 @@ def test_success_envelope_and_result(tmp_path: Path):
     assert doc["command"] == "compress-image"
     assert "error" not in doc
     res = doc["result"]
+    input_mtime = res["input"].pop("mtime")
+    assert isinstance(input_mtime, str)
+    assert res["output"].pop("mtime") == input_mtime
     assert res["input"] == {"path": str(src), "format": "jpeg", "size_bytes": src.stat().st_size}
     assert res["output"] == {"path": str(out), "format": "jpeg", "size_bytes": out.stat().st_size}
     assert res["tinify"] == {"compressions_this_month": 42}

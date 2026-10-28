@@ -64,6 +64,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 - The format is detected from the file content, never from its extension
 - The output is written atomically: a temporary file in the destination folder, then a rename
 - The output is written even when it is larger than the original
+- When reading from a file, the output gets the original's atime and mtime, applied after exiftool rewrites it (with or without `--json`, whatever `--metadata`). From stdin, there is no date to carry over
 - Every check that can fail without Tinify (input, format, size, existing output) runs before the API call, so no credit is wasted
 
 ## JSON output (`--json`)
@@ -76,14 +77,14 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
   "ok": true,
   "command": "compress-image",
   "result": {
-    "input": {"path": "photo.jpg", "format": "jpeg", "size_bytes": 2481152},
-    "output": {"path": "compressed.jpg", "format": "jpeg", "size_bytes": 812345},
+    "input": {"path": "photo.jpg", "format": "jpeg", "size_bytes": 2481152, "mtime": "2022-08-09T10:11:12.654321+00:00"},
+    "output": {"path": "compressed.jpg", "format": "jpeg", "size_bytes": 812345, "mtime": "2022-08-09T10:11:12.654321+00:00"},
     "tinify": {"compressions_this_month": 42}
   }
 }
 ```
 
-`input.path` is `null` when reading from stdin. On failure:
+`mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
 
 ```json
 {
