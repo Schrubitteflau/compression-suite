@@ -16,7 +16,13 @@ from tinify import ConnectionError as TinifyConnectionError
 
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
-from compression_suite.utils.metadata_diff import REENCODING_REASON, ExpectedLoss, diff_metadata, read_metadata
+from compression_suite.utils.metadata_diff import (
+    REENCODING_REASON,
+    ExpectedLoss,
+    diff_metadata,
+    pixel_transparency,
+    read_metadata,
+)
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
@@ -247,8 +253,8 @@ def compress_image(
     else:
         exiftool_source = original_path
 
-    def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any]]:
-        """Copy the metadata, read the final bytes and tags, then give the file the original's atime and mtime.
+    def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None]:
+        """Copy the metadata, read the final bytes, tags and transparency, then give the file the original's dates.
 
         The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
         """
@@ -256,19 +262,23 @@ def compress_image(
             preserve_metadata(exiftool, exiftool_source, compressed_path)
         final_buffer = compressed_path.read_bytes()
         final_tags = read_metadata(exiftool, compressed_path)
+        final_transparency = pixel_transparency(compressed_path)
         if original_stat is not None:
             os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-        return final_buffer, final_tags
+        return final_buffer, final_tags, final_transparency
 
     try:
         original_tags = read_metadata(exiftool, exiftool_source)
+        original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
-            final_buffer, final_tags = write_atomically(output_path, compressed_buffer, apply_metadata_and_dates)
+            final_buffer, final_tags, final_transparency = write_atomically(
+                output_path, compressed_buffer, apply_metadata_and_dates,
+            )
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                final_buffer, final_tags = apply_metadata_and_dates(tmp_compressed)
+                final_buffer, final_tags, final_transparency = apply_metadata_and_dates(tmp_compressed)
             sys.stdout.buffer.write(final_buffer)
     finally:
         if stdin_original is not None:
@@ -280,6 +290,7 @@ def compress_image(
         original_tags,
         final_tags,
         EXPECTED_LOSSES if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
+        transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
     )
 

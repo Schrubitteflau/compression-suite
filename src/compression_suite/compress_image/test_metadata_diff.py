@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -29,13 +30,19 @@ REENCODING_REASON = "réencodage"
 SCREENSHOT_MTIME_NS = 1_660_039_872_654_321_000
 
 
-def _reencode_like_tinify(data: bytes, resize: float = 1.0) -> bytes:
-    """Re-encode the pixels without any metadata, as Tinify does (progressive JPEG, palette PNG, same format else)."""
+def _reencode_like_tinify(data: bytes, resize: float = 1.0, drop_alpha: bool = False) -> bytes:
+    """Re-encode the pixels without any metadata, as Tinify does (progressive JPEG, palette PNG, same format else).
+
+    `drop_alpha` flattens the image first, as a faulty compression would.
+    """
     image = Image.open(io.BytesIO(data))
     fmt = image.format
     image.info.clear()  # Pillow would otherwise write the ICC profile and EXIF back
     if resize != 1.0:
         image = image.resize((int(image.width * resize), int(image.height * resize)))
+    fully_opaque = image.mode == "RGBA" and image.getchannel("A").getextrema() == (255, 255)
+    if drop_alpha or fully_opaque:  # Tinify drops an alpha channel that hides nothing
+        image = image.convert("RGB")
     buf = io.BytesIO()
     if fmt == "JPEG":
         image.save(buf, format="JPEG", quality=80, progressive=True)
@@ -46,14 +53,15 @@ def _reencode_like_tinify(data: bytes, resize: float = 1.0) -> bytes:
     return buf.getvalue()
 
 
-def _fake_tinify(resize: float = 1.0):
-    """Patch tinify so the compressed result is the input re-encoded without metadata."""
+def _fake_tinify(resize: float = 1.0, drop_alpha: bool = False, output: bytes | None = None):
+    """Patch tinify so the compressed result is the input re-encoded without metadata, or `output`."""
     mock = MagicMock()
     mock.compression_count = 42
 
     def make_source(data: bytes):
         source = MagicMock()
-        source.to_buffer.return_value = _reencode_like_tinify(data, resize)
+        reencoded = _reencode_like_tinify(data, resize, drop_alpha) if output is None else output
+        source.to_buffer.return_value = reencoded
         return source
 
     mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
@@ -61,9 +69,11 @@ def _fake_tinify(resize: float = 1.0):
     return patch("compression_suite.compress_image.main.tinify", mock)
 
 
-def _compress(src: Path, out: Path, *args: str, resize: float = 1.0) -> dict:
+def _compress(
+    src: Path, out: Path, *args: str, resize: float = 1.0, drop_alpha: bool = False, output: bytes | None = None,
+) -> dict:
     """Run compress-image --json and return the metadata diff."""
-    with _fake_tinify(resize):
+    with _fake_tinify(resize, drop_alpha, output):
         result = runner.invoke(
             app, ["compress-image", str(src), "--output", str(out), "--api-key", "test-key", "--json", *args],
         )
@@ -87,6 +97,15 @@ def _screenshot(tmp_path: Path) -> Path:
     return src
 
 
+def _transparent_image(tmp_path: Path, fmt: str = "PNG") -> Path:
+    """Write an image whose left half is fully transparent."""
+    image = Image.new("RGBA", (40, 30), (200, 30, 30, 255))
+    image.paste((0, 0, 0, 0), (0, 0, 20, 30))
+    src = tmp_path / f"logo.{fmt.lower()}"
+    image.save(src, format=fmt)
+    return src
+
+
 # --- S23 photo ----------------------------------------------------------------
 
 
@@ -94,7 +113,7 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
     metadata = _compress(S23_PHOTO, tmp_path / "out.jpg")
 
     assert [field["key"] for field in metadata["important"]] == [
-        "capture_date", "gps", "camera", "dimensions", "orientation", "color_profile",
+        "capture_date", "gps", "camera", "dimensions", "orientation", "color_profile", "transparency",
     ]
     gps = {
         "latitude": "12 deg 20' 44.16\"",
@@ -127,6 +146,7 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
             "after": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription",
             "status": "same",
         },
+        "transparency": {"key": "transparency", "before": False, "after": False, "source": "pixels", "status": "same"},
     }
 
 
@@ -205,13 +225,6 @@ def test_png_without_photo_fields_reports_them_absent(tmp_path: Path):
     assert important["dimensions"]["source"] == "PNG:ImageWidth"
 
 
-def test_png_palette_conversion_is_a_reencoding_loss(tmp_path: Path):
-    expected = _expected(_compress(_screenshot(tmp_path), tmp_path / "out.png"))
-    assert expected["PNG:ColorType"] == {
-        "tag": "PNG:ColorType", "before": "RGB with Alpha", "reason": REENCODING_REASON,
-    }
-
-
 def test_stdin_has_no_mtime_to_fall_back_to(tmp_path: Path):
     with _fake_tinify():
         result = runner.invoke(
@@ -246,6 +259,65 @@ def test_icc_profile_exiftool_cannot_write_back_is_an_unexpected_removal(tmp_pat
         "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": None,
     } in metadata["unexpected_losses"]
     assert _important(metadata)["color_profile"]["status"] == "lost"
+
+
+# --- Transparency -------------------------------------------------------------
+
+
+def test_opaque_alpha_channel_dropped_from_a_gnome_capture_is_reencoding(tmp_path: Path):
+    """gnome-screenshot writes RGBA captures without any transparent pixel: Tinify drops their alpha channel."""
+    metadata = _compress(_screenshot(tmp_path), tmp_path / "out.png")
+    assert metadata["unexpected_losses"] == []
+    assert _expected(metadata)["PNG:ColorType"] == {
+        "tag": "PNG:ColorType", "before": "RGB with Alpha", "reason": REENCODING_REASON,
+    }
+    assert _important(metadata)["transparency"] == {
+        "key": "transparency", "before": False, "after": False, "source": "pixels", "status": "same",
+    }
+
+
+def test_transparency_kept_in_a_palette_is_reencoding(tmp_path: Path):
+    metadata = _compress(_transparent_image(tmp_path), tmp_path / "out.png")
+    assert metadata["unexpected_losses"] == []
+    assert _expected(metadata)["PNG:ColorType"]["reason"] == REENCODING_REASON
+    assert _important(metadata)["transparency"] == {
+        "key": "transparency", "before": True, "after": True, "source": "pixels", "status": "same",
+    }
+
+
+@pytest.mark.parametrize("mode", ["keep", "strip"])
+@pytest.mark.parametrize(
+    ("fmt", "alpha_loss"),
+    [
+        ("PNG", {"tag": "PNG:ColorType", "kind": "changed", "before": "RGB with Alpha", "after": "Palette"}),
+        ("WEBP", {"tag": "RIFF:WebP_Flags", "kind": "removed", "before": "Alpha", "after": None}),
+        (
+            "AVIF",
+            {
+                "tag": "QuickTime:AuxiliaryImageType", "kind": "removed",
+                "before": "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha", "after": None,
+            },
+        ),
+    ],
+)
+def test_lost_transparency_is_never_expected(tmp_path: Path, mode: str, fmt: str, alpha_loss: dict):
+    src = _transparent_image(tmp_path, fmt)
+    metadata = _compress(src, tmp_path / f"out.{fmt.lower()}", "--metadata", mode, drop_alpha=True)
+    assert _important(metadata)["transparency"] == {
+        "key": "transparency", "before": True, "after": False, "source": "pixels", "status": "lost",
+    }
+    assert alpha_loss in metadata["unexpected_losses"]
+    assert alpha_loss["tag"] not in _expected(metadata)
+
+
+def test_transparency_is_unverified_when_the_output_cannot_be_decoded(tmp_path: Path):
+    corrupt_png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+    metadata = _compress(_transparent_image(tmp_path), tmp_path / "out.png", "--metadata", "strip", output=corrupt_png)
+    assert _important(metadata)["transparency"] == {
+        "key": "transparency", "before": True, "after": None, "source": "pixels", "status": "unverified",
+    }
+    assert "PNG:ColorType" not in _expected(metadata)
+    assert "PNG:ColorType" in {loss["tag"] for loss in metadata["unexpected_losses"]}
 
 
 # --- --metadata strip ---------------------------------------------------------

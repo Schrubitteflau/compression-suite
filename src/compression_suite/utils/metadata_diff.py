@@ -15,6 +15,8 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
 
@@ -25,9 +27,24 @@ REENCODING_REASON = "réencodage"
 FILE_GROUP_COMPARED_TAGS = ("File:ImageWidth", "File:ImageHeight", "File:Comment")
 
 # Groups carrying the image dimensions, by format. A change of dimensions is never expected, whatever the command
-# declares: the image must keep its size.
+# declares (even `--metadata strip`): the image must keep its size.
 DIMENSION_GROUPS = ("File", "PNG", "RIFF")
 DIMENSION_TAGS = tuple(f"{group}:{name}" for group in DIMENSION_GROUPS for name in ("ImageWidth", "ImageHeight"))
+
+# Tags that describe an alpha channel, by format. Re-encoding may change them, or drop an alpha channel without any
+# transparent pixel, but losing a real transparency, or not being able to check it, is never expected.
+ALPHA_TAGS = (
+    "PNG:ColorType",
+    "PNG:Transparency",
+    "RIFF:WebP_Flags",
+    "RIFF:AlphaPreprocessing",
+    "RIFF:AlphaFiltering",
+    "RIFF:AlphaCompression",
+    "QuickTime:AuxiliaryImageType",
+)
+
+# The transparency is read on the decoded pixels, not in the tags.
+TRANSPARENCY_SOURCE = "pixels"
 
 MTIME_SOURCE = "file_mtime"
 
@@ -125,6 +142,29 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     }
 
 
+def pixel_transparency(path: Path) -> bool | None:
+    """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it."""
+    try:
+        with Image.open(path) as image:
+            if image.mode not in ("RGBA", "LA", "PA", "La", "RGBa") and "transparency" not in image.info:
+                return False
+            return image.convert("RGBA").getchannel("A").getextrema()[0] < 255
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+
+
+def _transparency_field(transparency: tuple[bool | None, bool | None]) -> dict[str, Any]:
+    """The important field telling whether the image keeps its transparent pixels."""
+    before, after = transparency
+    if before is None or after is None:
+        status = "unverified"
+    elif before == after:
+        status = "same"
+    else:
+        status = "lost" if before else "changed"
+    return {"key": "transparency", "before": before, "after": after, "source": TRANSPARENCY_SOURCE, "status": status}
+
+
 def _candidate_value(candidate: Candidate, tags: dict[str, Any]) -> tuple[Any, str] | None:
     """The candidate's value and source in `tags`, or None if its first tag is missing."""
     if isinstance(candidate, str):
@@ -156,9 +196,12 @@ def _status(before: Any, after: Any) -> str:
 
 
 def _important_fields(
-    before: dict[str, Any], after: dict[str, Any], mtimes: tuple[str, str] | None,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    mtimes: tuple[str, str] | None,
+    transparency: tuple[bool | None, bool | None],
 ) -> list[dict[str, Any]]:
-    """Every important field, in a fixed order, with its value before and after."""
+    """Every important field, in a fixed order, with its value before and after (the transparency last)."""
     fields = []
     for field in IMPORTANT_FIELDS:
         before_value, before_source = _field_value(field, before)
@@ -173,12 +216,23 @@ def _important_fields(
             "source": source,
             "status": _status(before_value, after_value),
         })
+    fields.append(_transparency_field(transparency))
     return fields
 
 
-def _expected_reason(tag: str, expected_losses: list[ExpectedLoss]) -> str | None:
+def _never_expected_tags(transparency: tuple[bool | None, bool | None]) -> set[str]:
+    """Tags whose loss is unexpected whatever the command declares: the dimensions, and the alpha tags unless the
+    original is known to be opaque or the output known to be transparent."""
+    never_expected = set(DIMENSION_TAGS)
+    before, after = transparency
+    if before is not False and after is not True:
+        never_expected.update(ALPHA_TAGS)
+    return never_expected
+
+
+def _expected_reason(tag: str, expected_losses: list[ExpectedLoss], never_expected: set[str]) -> str | None:
     """The reason of the first expected loss matching the tag, the `File` group's, or None if the loss is unexpected."""
-    if tag in DIMENSION_TAGS:
+    if tag in never_expected:
         return None
     for loss in expected_losses:
         if fnmatchcase(tag, loss.pattern):
@@ -192,18 +246,21 @@ def diff_metadata(
     before: dict[str, Any],
     after: dict[str, Any],
     expected_losses: list[ExpectedLoss],
+    transparency: tuple[bool | None, bool | None],
     mtimes: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Classify the differences between the tags of the original (`before`) and of its processed copy (`after`).
 
+    `transparency` tells, for both files, whether a pixel is not fully opaque (`pixel_transparency`).
     `mtimes` are the ISO 8601 mtimes of both files, the capture date of last resort. Leave it out when the
     original's mtime is unknown (stdin).
     """
     expected, unexpected = [], []
+    never_expected = _never_expected_tags(transparency)
     for tag, value in before.items():
         if tag in after and after[tag] == value:
             continue
-        reason = _expected_reason(tag, expected_losses)
+        reason = _expected_reason(tag, expected_losses, never_expected)
         if reason is not None:
             expected.append({"tag": tag, "before": value, "reason": reason})
         elif tag in after:
@@ -211,7 +268,7 @@ def diff_metadata(
         else:
             unexpected.append({"tag": tag, "kind": "removed", "before": value, "after": None})
     return {
-        "important": _important_fields(before, after, mtimes),
+        "important": _important_fields(before, after, mtimes, transparency),
         "unexpected_losses": unexpected,
         "expected_losses": expected,
         "added": [{"tag": tag, "after": value} for tag, value in after.items() if tag not in before],

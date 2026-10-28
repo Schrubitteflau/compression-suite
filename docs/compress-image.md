@@ -55,7 +55,7 @@ This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, orien
 
 ### `--metadata=strip`
 
-The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande", except a change of dimensions, which is never expected.
+The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande", except a change of dimensions or a lost transparency, which are never expected.
 
 ### Metadata diff (`--json`)
 
@@ -83,10 +83,12 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - `dimensions`: `{width, height}`
   - `orientation`
   - `color_profile`: description of the ICC profile, `null` if none
+  - `transparency`: whether at least one pixel is not fully opaque, read on the pixels decoded by Pillow (`source: "pixels"`), for every format. `before` or `after` is `null`, and `status` is `unverified`, when Pillow can't decode that file. `lost` means a real transparency disappeared
 - **`expected_losses`** (`tag`, `before`, `reason`): losses decided by compression-suite, declared in `compress_image/main.py` next to the exiftool exclusions:
   - the EXIF thumbnail (`IFD1:*`) and its `Compression`
   - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
+- **Never expected**, whatever `--metadata`: a change of the dimensions, and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
 - **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.
 - Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
