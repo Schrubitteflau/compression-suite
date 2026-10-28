@@ -109,6 +109,8 @@ def run_command(command: str, json_mode: bool, body: Callable[[], dict[str, Any]
 
     if json_mode:
         typer.echo(json.dumps(error_envelope(command, error)))
+    elif error.code is ErrorCode.INTERRUPTED:
+        stderr_console.print(f"\n[bold yellow]{error.message}[/bold yellow]")
     else:
         stderr_console.print(f"[bold red]Error:[/bold red] {error.message}", highlight=False)
     raise typer.Exit(code=error.code.exit_code)
@@ -118,6 +120,7 @@ class JsonUsageErrorCommand(TyperCommand):
     """Typer command that reports its own usage errors (bad options) as a JSON envelope under `--json`."""
 
     def make_context(self, info_name, args, parent=None, **extra):
+        """Parse the arguments; under `--json`, turn a usage error into a `usage_error` envelope and exit 2."""
         json_mode = "--json" in args
         try:
             return super().make_context(info_name, args, parent=parent, **extra)

@@ -96,6 +96,7 @@ def preserve_metadata(original_path: Path, compressed_path: Path):
 
 
 def current_umask() -> int:
+    """Read the process umask (os.umask can only read it by setting it, so it is restored at once)."""
     umask = os.umask(0)
     os.umask(umask)
     return umask
@@ -170,6 +171,8 @@ def compress_image(
         prepare_source = lambda: tinify.from_buffer(buffer)
 
     output_path = Path(output) if output is not None else None
+    if output_path is not None and output_path.is_dir():
+        raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output}.")
     if output_path is not None and output_path.exists() and not overwrite:
         raise CommandError(
             ErrorCode.OUTPUT_EXISTS, f"Output file already exists: {output}. Use --overwrite to replace.",
@@ -190,6 +193,7 @@ def compress_image(
             exiftool_source = original_path
 
     def copy_metadata(compressed_path: Path) -> None:
+        """Copy the original's metadata onto the compressed file, unless metadata is stripped."""
         if exiftool_source is not None:
             preserve_metadata(exiftool_source, compressed_path)
 

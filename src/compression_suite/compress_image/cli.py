@@ -32,6 +32,7 @@ def compress_image(
     writes to a file or stdout. Metadata is preserved by default using exiftool.
     """
     def body() -> dict[str, Any]:
+        """Run the compression and return the `result` object of the JSON contract."""
         if json_mode and output is None:
             raise CommandError(
                 ErrorCode.USAGE_ERROR, "--json requires --output: stdout is reserved for the JSON document",

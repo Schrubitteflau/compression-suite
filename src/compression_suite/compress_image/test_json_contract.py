@@ -319,7 +319,28 @@ def test_keyboard_interrupt_gives_interrupted(tmp_path: Path):
     _assert_error(result, "interrupted", 130)
 
 
+def test_output_is_a_directory_refused_before_tinify_even_with_overwrite(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    out = tmp_path / "out.jpg"
+    out.mkdir()
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(out), "--overwrite", "--json")
+    _assert_error(result, "output_exists", 24)
+    _assert_tinify_not_called(fake)
+
+
 # --- Human mode (no --json) ----------------------------------------------------
+
+
+def test_human_mode_interrupt_message(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    with _fake_tinify(error=KeyboardInterrupt()):
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"))
+    assert result.exit_code == 130
+    assert "Interrupted by user" in result.stderr
+    assert "Error" not in result.stderr
 
 
 def test_human_mode_same_exit_codes_and_readable_stderr(tmp_path: Path):

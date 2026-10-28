@@ -112,7 +112,7 @@ Exit codes are the same with or without `--json`.
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |
 | `input_not_found` | 23 | Input missing or not a file | |
-| `output_exists` | 24 | Output exists without `--overwrite` | |
+| `output_exists` | 24 | Output exists without `--overwrite`, or is a directory | |
 | `metadata_copy_failed` | 25 | exiftool failed to copy metadata back | |
 | `internal_error` | 50 | Any other error | |
 | `interrupted` | 130 | Interrupted by user (Ctrl+C) | |
