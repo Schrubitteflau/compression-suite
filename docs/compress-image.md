@@ -68,11 +68,11 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 ```json
 {
   "important": [
-    {"key": "capture_date", "before": "2026:09:25 20:57:02", "after": "2026:09:25 20:57:02", "source": "ExifIFD:DateTimeOriginal", "status": "same"},
+    {"key": "capture_date", "before": "2024:06:15 12:00:00", "after": "2024:06:15 12:00:00", "source": "ExifIFD:DateTimeOriginal", "status": "same"},
     {"key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription", "status": "same"}
   ],
   "unexpected_losses": [{"tag": "PNG:ImageWidth", "kind": "changed", "before": 320, "after": 160}],
-  "expected_losses": [{"tag": "Samsung:TimeStamp", "before": "2026:09:25 20:57:02.918+02:00", "reason": "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"}],
+  "expected_losses": [{"tag": "Samsung:TimeStamp", "before": "2024:06:15 12:00:00.918+02:00", "reason": "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"}],
   "added": [{"tag": "JFIF:JFIFVersion", "after": 1.01}],
   "before": {"IFD0:Make": "samsung", "...": "..."},
   "after": {"IFD0:Make": "samsung", "...": "..."}
@@ -93,7 +93,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
 - **Never expected**, whatever `--metadata`: a change of the dimensions, and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
-- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
+- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). A real transparency lost, or that couldn't be checked, is also listed under the synthetic tag `pixels:transparency` (`kind: "removed"` or `"unverified"`, `before`/`after` as in the `transparency` field), since an output can keep its alpha tags with every pixel made opaque. An original known to be opaque gives no such entry. In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.
 - Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
 

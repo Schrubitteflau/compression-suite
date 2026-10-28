@@ -46,6 +46,9 @@ ALPHA_TAGS = (
 # The transparency is read on the decoded pixels, not in the tags.
 TRANSPARENCY_SOURCE = "pixels"
 
+# Synthetic tag of a transparency loss read on the pixels, which no alpha tag may show (an RGBA output made opaque).
+TRANSPARENCY_TAG = f"{TRANSPARENCY_SOURCE}:transparency"
+
 MTIME_SOURCE = "file_mtime"
 
 
@@ -165,6 +168,23 @@ def _transparency_field(transparency: tuple[bool | None, bool | None]) -> dict[s
     return {"key": "transparency", "before": before, "after": after, "source": TRANSPARENCY_SOURCE, "status": status}
 
 
+def _transparency_loss(transparency: tuple[bool | None, bool | None]) -> dict[str, Any] | None:
+    """The unexpected loss of a real transparency, `removed` or `unverified`, or None if none could be lost.
+
+    An original known to be opaque has no transparency to lose, even when the output can't be decoded.
+    """
+    before, after = transparency
+    if before is False:
+        return None
+    if before is True and after is False:
+        kind = "removed"
+    elif before is None or after is None:
+        kind = "unverified"
+    else:
+        return None
+    return {"tag": TRANSPARENCY_TAG, "kind": kind, "before": before, "after": after}
+
+
 def _candidate_value(candidate: Candidate, tags: dict[str, Any]) -> tuple[Any, str] | None:
     """The candidate's value and source in `tags`, or None if its first tag is missing."""
     if isinstance(candidate, str):
@@ -267,6 +287,9 @@ def diff_metadata(
             unexpected.append({"tag": tag, "kind": "changed", "before": value, "after": after[tag]})
         else:
             unexpected.append({"tag": tag, "kind": "removed", "before": value, "after": None})
+    transparency_loss = _transparency_loss(transparency)
+    if transparency_loss is not None:
+        unexpected.append(transparency_loss)
     return {
         "important": _important_fields(before, after, mtimes, transparency),
         "unexpected_losses": unexpected,

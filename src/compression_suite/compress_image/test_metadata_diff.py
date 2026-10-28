@@ -307,6 +307,9 @@ def test_lost_transparency_is_never_expected(tmp_path: Path, mode: str, fmt: str
         "key": "transparency", "before": True, "after": False, "source": "pixels", "status": "lost",
     }
     assert alpha_loss in metadata["unexpected_losses"]
+    assert {"tag": "pixels:transparency", "kind": "removed", "before": True, "after": False} in metadata[
+        "unexpected_losses"
+    ]
     assert alpha_loss["tag"] not in _expected(metadata)
 
 
@@ -318,6 +321,31 @@ def test_transparency_is_unverified_when_the_output_cannot_be_decoded(tmp_path: 
     }
     assert "PNG:ColorType" not in _expected(metadata)
     assert "PNG:ColorType" in {loss["tag"] for loss in metadata["unexpected_losses"]}
+    assert {
+        "tag": "pixels:transparency", "kind": "unverified", "before": True, "after": None,
+    } in metadata["unexpected_losses"]
+
+
+def test_transparency_made_opaque_without_alpha_tag_change_is_unexpected(tmp_path: Path):
+    """The output keeps its RGBA colour type but every pixel is opaque: no alpha tag changes, only the pixels tell."""
+    src = _transparent_image(tmp_path)
+    opaque = Image.open(src)
+    opaque.putalpha(255)
+    buf = io.BytesIO()
+    opaque.save(buf, format="PNG")
+    metadata = _compress(src, tmp_path / "out.png", output=buf.getvalue())
+    assert metadata["after"]["PNG:ColorType"] == metadata["before"]["PNG:ColorType"] == "RGB with Alpha"
+    assert _important(metadata)["transparency"]["status"] == "lost"
+    assert metadata["unexpected_losses"] == [
+        {"tag": "pixels:transparency", "kind": "removed", "before": True, "after": False},
+    ]
+
+
+def test_unverified_transparency_of_an_opaque_original_is_no_loss(tmp_path: Path):
+    corrupt_png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+    metadata = _compress(_screenshot(tmp_path), tmp_path / "out.png", "--metadata", "strip", output=corrupt_png)
+    assert _important(metadata)["transparency"]["status"] == "unverified"
+    assert "pixels:transparency" not in {loss["tag"] for loss in metadata["unexpected_losses"]}
 
 
 # --- --metadata strip ---------------------------------------------------------
