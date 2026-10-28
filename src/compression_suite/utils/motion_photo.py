@@ -8,8 +8,9 @@ A motion photo carries a video after its image, which a re-encoding drops. Signa
 - `samsung_motion_photo_data`: the Samsung end-of-file trailer (`SEFT`) has a `MotionPhoto_Data` entry;
 - `trailing_data`: bytes after the end of the image that no known structure explains. The end of the image is the
   EOI of the main JPEG image, the end of the PNG `IEND` chunk or the RIFF size of a WebP. The images declared by a
-  JPEG's MPF segment and the entries and index of a readable `SEFT` zone are known structures; a `SEFT` zone without
-  `MotionPhoto_Data` thus gives no signal, while an unreadable index, or bytes between its entries, are unexplained.
+  JPEG's MPF segment, the items declared by its XMP `Container:Directory`, and the entries and index of a readable
+  `SEFT` zone are known structures; a `SEFT` zone without `MotionPhoto_Data` thus gives no signal, while an
+  unreadable index, or bytes between its entries, are unexplained.
   A file whose end can't be found (truncated, unknown format, AVIF) is not checked for trailing bytes.
 
 The XMP is read in the tags of exiftool (`-j -G1`); the end of the image and the trailer, in the bytes.
@@ -17,6 +18,7 @@ The XMP is read in the tags of exiftool (`-j -G1`); the end of the image and the
 
 import struct
 from typing import Any
+from xml.etree import ElementTree
 
 from compression_suite.utils.formats import detect_format
 from compression_suite.utils.seft import SeftError, read_seft
@@ -102,14 +104,19 @@ _SOS = 0xDA
 _EOI = 0xD9
 _APP2 = 0xE2
 _STANDALONE_MARKERS = {0x01, *range(0xD0, 0xD8)}  # TEM and RST0-7 have no length
+_APP1 = 0xE1
 _MPF_IDENTIFIER = b"MPF\0"
 _MP_ENTRY_TAG = 0xB002
+_XMP_IDENTIFIER = b"http://ns.adobe.com/xap/1.0/\0"
+_CONTAINER_NS = "{http://ns.google.com/photos/1.0/container/}"
+_ITEM_NS = "{http://ns.google.com/photos/1.0/container/item/}"
 
 
 def _jpeg_end(data: bytes) -> tuple[int, list[Span]]:
-    """End of the main image's EOI, and the images its MPF segment declares after it."""
+    """End of the main image's EOI, and what its MPF segment and its XMP `Container:Directory` declare after it."""
     pos = 2  # after SOI
     mpf_images: list[Span] = []
+    container_items: list[dict[str, str]] = []
     while True:
         if data[pos] != 0xFF:
             raise ValueError(f"no JPEG marker at {pos}")
@@ -118,7 +125,7 @@ def _jpeg_end(data: bytes) -> tuple[int, list[Span]]:
             pos += 1
             continue
         if marker == _EOI:
-            return pos + 2, mpf_images
+            return pos + 2, mpf_images + _container_spans(container_items, pos + 2, len(data))
         if marker in _STANDALONE_MARKERS:
             pos += 2
             continue
@@ -126,6 +133,8 @@ def _jpeg_end(data: bytes) -> tuple[int, list[Span]]:
         segment_start, segment_end = pos + 4, pos + 2 + length
         if marker == _APP2 and data[segment_start : segment_start + 4] == _MPF_IDENTIFIER:
             mpf_images = _mpf_images(data, segment_start + 4)
+        if marker == _APP1 and data[segment_start : segment_start + len(_XMP_IDENTIFIER)] == _XMP_IDENTIFIER:
+            container_items = _container_items(data[segment_start + len(_XMP_IDENTIFIER) : segment_end])
         pos = segment_end
         if marker == _SOS:
             pos = _entropy_coded_end(data, pos)
@@ -167,6 +176,41 @@ def _mpf_images(data: bytes, tiff_start: int) -> list[Span]:
                 spans.append((start, end))
         return spans
     return []
+
+
+def _container_items(xmp: bytes) -> list[dict[str, str]]:
+    """The `Item:*` fields of each `Container:Item` of the XMP, in directory order (attributes or child elements)."""
+    try:
+        root = ElementTree.fromstring(xmp)
+    except ElementTree.ParseError:
+        return []
+    items = []
+    for item in root.iter(f"{_CONTAINER_NS}Item"):
+        fields = {name[len(_ITEM_NS) :]: value for name, value in item.attrib.items() if name.startswith(_ITEM_NS)}
+        fields.update(
+            {child.tag[len(_ITEM_NS) :]: child.text or "" for child in item if child.tag.startswith(_ITEM_NS)},
+        )
+        items.append(fields)
+    return items
+
+
+def _container_spans(items: list[dict[str, str]], image_end: int, file_end: int) -> list[Span]:
+    """Spans of the `Container:Directory` items: the primary image's padding, then the other items, which end the file.
+
+    Each item but the primary takes its `Length` plus its `Padding`. A directory that doesn't fit between the image
+    and the end of the file explains nothing.
+    """
+    if not items:
+        return []
+    try:
+        padding = int(items[0].get("Padding", 0))
+        others = sum(int(item.get("Length", 0)) + int(item.get("Padding", 0)) for item in items[1:])
+    except ValueError:
+        return []
+    others_start = file_end - others
+    if padding < 0 or others < 0 or others_start < image_end + padding:
+        return []
+    return [(image_end, image_end + padding), (others_start, file_end)]
 
 
 # --- PNG and WebP ----------------------------------------------------------------

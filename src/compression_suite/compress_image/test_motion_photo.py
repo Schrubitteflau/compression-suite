@@ -50,14 +50,26 @@ CONTAINER_DIRECTORY = """<Container:Directory>
       </Container:Directory>"""
 
 
-def _fake_tinify():
-    """Patch tinify so the compressed result is the input itself."""
+MOTION_PHOTO_REASON = "photo animée : perte autorisée"
+
+
+def _reencode_like_tinify(data: bytes) -> bytes:
+    """Re-encode the pixels without any metadata nor trailer, as Tinify does."""
+    image = Image.open(io.BytesIO(data))
+    image.info.clear()
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
+
+
+def _fake_tinify(reencode: bool = False):
+    """Patch tinify so the compressed result is the input itself, or the input re-encoded like Tinify."""
     mock = MagicMock()
     mock.compression_count = 42
 
     def make_source(data: bytes):
         source = MagicMock()
-        source.to_buffer.return_value = data
+        source.to_buffer.return_value = _reencode_like_tinify(data) if reencode else data
         return source
 
     mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
@@ -65,9 +77,11 @@ def _fake_tinify():
     return patch("compression_suite.compress_image.main.tinify", mock)
 
 
-def _invoke(src: Path | None, out: Path, *args: str, input: bytes | None = None) -> tuple[Result, MagicMock]:
+def _invoke(
+    src: Path | None, out: Path, *args: str, input: bytes | None = None, reencode: bool = False,
+) -> tuple[Result, MagicMock]:
     """Run compress-image --json, returning the CLI result and the fake Tinify."""
-    with _fake_tinify() as fake:
+    with _fake_tinify(reencode) as fake:
         result = runner.invoke(
             app,
             [
@@ -115,8 +129,8 @@ def _write(tmp_path: Path, name: str, data: bytes) -> Path:
 def test_google_motion_photo_is_refused(tmp_path: Path):
     out = tmp_path / "out.jpg"
     signals = _assert_refused(*_invoke(GOOGLE_MOTION_PHOTO, out), out)
-    # The appended video is explained by the XMP alone, which is no structure the end of the JPEG accounts for
-    assert signals == ["xmp_google_motion_photo", "xmp_container_video", "trailing_data"]
+    # The appended video is the item `Container:Directory` declares: no trailing data
+    assert signals == ["xmp_google_motion_photo", "xmp_container_video"]
 
 
 def test_samsung_motion_photo_is_refused(tmp_path: Path):
@@ -257,6 +271,32 @@ def test_motion_photo_data_in_an_unreadable_index_is_only_trailing_data(tmp_path
     assert _assert_refused(*_invoke(src, out), out) == ["trailing_data"]
 
 
+def test_bytes_after_the_container_items_are_trailing_data(tmp_path: Path):
+    """The last item ends the file: bytes appended after it leave the start of the video unexplained."""
+    src = _write(tmp_path, "photo.jpg", GOOGLE_MOTION_PHOTO.read_bytes() + b"unexplained")
+    out = tmp_path / "out.jpg"
+    signals = _assert_refused(*_invoke(src, out), out)
+    assert signals == ["xmp_google_motion_photo", "xmp_container_video", "trailing_data"]
+
+
+def test_container_items_longer_than_the_trailing_bytes_explain_nothing(tmp_path: Path):
+    xmp = GCAMERA_XMP.format(attributes="", directory=CONTAINER_DIRECTORY.format(mime="video/mp4")).replace(
+        'Item:Length="0"', 'Item:Length="100000"',
+    )
+    src = _write(tmp_path, "photo.jpg", _jpeg(xmp) + b"short video")
+    out = tmp_path / "out.jpg"
+    assert _assert_refused(*_invoke(src, out), out) == ["xmp_container_video", "trailing_data"]
+
+
+def test_container_item_padding_after_the_primary_image_is_explained(tmp_path: Path):
+    xmp = GCAMERA_XMP.format(attributes="", directory=CONTAINER_DIRECTORY.format(mime="video/mp4")).replace(
+        'Item:Semantic="Primary"', 'Item:Semantic="Primary" Item:Padding="4"',
+    ).replace('Item:Length="0"', 'Item:Length="5"')
+    src = _write(tmp_path, "photo.jpg", _jpeg(xmp) + b"\0\0\0\0" + b"video")
+    out = tmp_path / "out.jpg"
+    assert _assert_refused(*_invoke(src, out), out) == ["xmp_container_video"]
+
+
 # --- Other formats -------------------------------------------------------------
 
 
@@ -299,6 +339,45 @@ def test_allow_motion_photo_loss_compresses_and_reports_the_signals(tmp_path: Pa
     }
     assert fake.from_file.called
     assert out.exists()
+
+
+@pytest.mark.parametrize("sample", [S23_MOTION_PHOTO, GOOGLE_MOTION_PHOTO, SAMSUNG_MOTION_PHOTO])
+def test_allowed_loss_strips_the_motion_photo_and_expects_its_losses(tmp_path: Path, sample: Path):
+    out = tmp_path / "out.jpg"
+    result, _ = _invoke(sample, out, "--allow-motion-photo-loss", reencode=True)
+    assert result.exit_code == 0, result.output
+    metadata = json.loads(result.stdout)["result"]["metadata"]
+    assert metadata["unexpected_losses"] == []
+    assert not any(tag.startswith(("XMP-GCamera:", "XMP-GContainer:")) for tag in metadata["after"])
+
+    # The compressed file is no motion photo any more: it compresses without the flag
+    again, _ = _invoke(out, tmp_path / "again.jpg")
+    assert _motion_photo_result(again) == {"detected": False, "signals": []}
+
+
+def test_allowed_loss_of_the_s23_motion_photo_gives_its_reason(tmp_path: Path):
+    result, _ = _invoke(S23_MOTION_PHOTO, tmp_path / "out.jpg", "--allow-motion-photo-loss", reencode=True)
+    metadata = json.loads(result.stdout)["result"]["metadata"]
+    expected = {loss["tag"]: loss["reason"] for loss in metadata["expected_losses"]}
+    for tag in (
+        "XMP-GCamera:MotionPhoto", "XMP-GCamera:MotionPhotoVersion", "XMP-GCamera:MotionPhotoPresentationTimestampUs",
+        "XMP-GContainer:DirectoryItemMime", "XMP-GContainer:DirectoryItemLength", "Google:MotionPhotoVideo",
+        "Samsung:EmbeddedVideoType", "Samsung:EmbeddedVideoFile",
+    ):
+        assert expected[tag] == MOTION_PHOTO_REASON, tag
+
+
+def test_xmp_other_than_the_motion_photo_is_kept(tmp_path: Path):
+    xmp = GCAMERA_XMP.format(
+        attributes='GCamera:MotionPhoto="1" xmlns:dc="http://purl.org/dc/elements/1.1/"',
+        directory='<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Neutral</rdf:li></rdf:Alt></dc:title>',
+    )
+    src = _write(tmp_path, "photo.jpg", _jpeg(xmp))
+    result, _ = _invoke(src, tmp_path / "out.jpg", "--allow-motion-photo-loss", reencode=True)
+    metadata = json.loads(result.stdout)["result"]["metadata"]
+    assert metadata["after"]["XMP-dc:Title"] == "Neutral"
+    assert "XMP-GCamera:MotionPhoto" not in metadata["after"]
+    assert metadata["unexpected_losses"] == []
 
 
 def test_allow_motion_photo_loss_without_motion_photo_reports_none(tmp_path: Path):

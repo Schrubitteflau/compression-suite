@@ -77,6 +77,24 @@ EXPECTED_LOSSES = [
 
 EXIFTOOL_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in EXPECTED_LOSSES if loss.excluded_tag]
 
+MOTION_PHOTO_REASON = "photo animée : perte autorisée"
+
+# Losses of a motion photo compressed with --allow-motion-photo-loss, which come before EXPECTED_LOSSES (the Samsung
+# video entry is also a trailer field). The XMP declaring the video is not copied back: the compressed file would
+# still claim a video it no longer has. Rewriting that XMP sets its toolkit, and drops it if nothing else remains.
+MOTION_PHOTO_LOSSES = [
+    ExpectedLoss("XMP-GCamera:MotionPhoto*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MotionPhoto*"),
+    ExpectedLoss("XMP-GCamera:MicroVideo*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MicroVideo*"),
+    ExpectedLoss("XMP-GContainer:*", MOTION_PHOTO_REASON, excluded_tag="XMP-GContainer:all"),
+    ExpectedLoss("XMP-x:XMPToolkit", MOTION_PHOTO_REASON),
+    ExpectedLoss("Google:MotionPhotoVideo", MOTION_PHOTO_REASON),
+    ExpectedLoss("Samsung:EmbeddedVideo*", MOTION_PHOTO_REASON),
+]
+
+EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [
+    f"-{loss.excluded_tag}=" for loss in MOTION_PHOTO_LOSSES if loss.excluded_tag
+]
+
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
 # "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost).
 EXIFTOOL_EXTRA_TAGS = [
@@ -145,14 +163,15 @@ def call_tinify(prepare_source: Callable[[], Any]) -> bytes:
         raise CommandError(ErrorCode.TINIFY_UNAVAILABLE, f"Connection error: {e}") from e
 
 
-def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path):
-    """Copy metadata from original to compressed file using exiftool, excluding problematic tags."""
+def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_exclusions: list[str]):
+    """Copy metadata from original to compressed file using exiftool, excluding problematic tags and extra ones."""
     cmd = [
         str(exiftool),
         "-TagsFromFile", str(original_path),
         "-all:all",
         *EXIFTOOL_EXTRA_TAGS,
         *EXIFTOOL_EXCLUDE_TAGS,
+        *extra_exclusions,
         "-overwrite_original",
         str(compressed_path),
     ]
@@ -267,6 +286,9 @@ def compress_image(
         original_tags = read_metadata(exiftool, exiftool_source)
         motion_photo = detect_motion_photo(original_buffer, original_tags)
         check_motion_photo(motion_photo, allow_motion_photo_loss)
+        # Past the check, a motion photo is one whose loss is allowed
+        motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS if motion_photo["detected"] else []
+        expected_losses = (MOTION_PHOTO_LOSSES if motion_photo["detected"] else []) + EXPECTED_LOSSES
 
         output_path = Path(output) if output is not None else None
         if output_path is not None and output_path.is_dir():
@@ -284,7 +306,7 @@ def compress_image(
             The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
             """
             if metadata == "keep":
-                preserve_metadata(exiftool, exiftool_source, compressed_path)
+                preserve_metadata(exiftool, exiftool_source, compressed_path, motion_photo_exclusions)
             final_buffer = compressed_path.read_bytes()
             final_tags = read_metadata(exiftool, compressed_path)
             final_transparency = pixel_transparency(compressed_path)
@@ -309,7 +331,7 @@ def compress_image(
     metadata_diff = diff_metadata(
         original_tags,
         final_tags,
-        EXPECTED_LOSSES if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
+        expected_losses if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
     )
