@@ -8,7 +8,8 @@ Layout, little-endian, as exiftool's `Samsung::ProcessSamsung` reads it:
   its distance back from the start of the index (int32u) and its size (int32u);
 - the length of the index (int32u), then `SEFT`, which ends the file.
 
-The zone runs from the farthest entry to the end of the file.
+The zone runs from the farthest entry to the end of the file. Only its entries and its index are described by
+the index: a byte between them is not.
 """
 
 import struct
@@ -47,11 +48,16 @@ class SeftEntry:
 
 @dataclass(frozen=True)
 class SeftZone:
-    """The trailer, from `start` (its farthest entry) to `end` (the end of the file)."""
+    """The trailer, from `start` (its farthest entry) to `end` (the end of the file), its index from `index_start`."""
 
     start: int
+    index_start: int
     end: int
     entries: tuple[SeftEntry, ...]
+
+    def described_spans(self) -> list[tuple[int, int]]:
+        """Byte ranges (end excluded) the index describes: each entry, then the index up to the end of the file."""
+        return [(entry.offset, entry.offset + entry.size) for entry in self.entries] + [(self.index_start, self.end)]
 
     def entry(self, name: str) -> SeftEntry | None:
         """The first entry with this name, if any."""
@@ -90,4 +96,4 @@ def read_seft(data: bytes) -> SeftZone | None:
         entries.append(SeftEntry(entry_type, name, offset, size))
 
     start = min((entry.offset for entry in entries), default=index_start)
-    return SeftZone(start, len(data), tuple(entries))
+    return SeftZone(start, index_start, len(data), tuple(entries))

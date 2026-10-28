@@ -1,4 +1,4 @@
-"""Motion photo detection, shared by compress-image and inspect: `{detected, signals}`.
+"""Motion photo detection, `{detected, signals}`: used by compress-image, meant to be reused by inspect.
 
 A motion photo carries a video after its image, which a re-encoding drops. Signals, in this order:
 
@@ -8,8 +8,9 @@ A motion photo carries a video after its image, which a re-encoding drops. Signa
 - `samsung_motion_photo_data`: the Samsung end-of-file trailer (`SEFT`) has a `MotionPhoto_Data` entry;
 - `trailing_data`: bytes after the end of the image that no known structure explains. The end of the image is the
   EOI of the main JPEG image, the end of the PNG `IEND` chunk or the RIFF size of a WebP. The images declared by a
-  JPEG's MPF segment and a readable `SEFT` zone are known structures; a `SEFT` zone without `MotionPhoto_Data` thus
-  gives no signal, while an unreadable index leaves its bytes unexplained.
+  JPEG's MPF segment and the entries and index of a readable `SEFT` zone are known structures; a `SEFT` zone without
+  `MotionPhoto_Data` thus gives no signal, while an unreadable index, or bytes between its entries, are unexplained.
+  A file whose end can't be found (truncated, unknown format, AVIF) is not checked for trailing bytes.
 
 The XMP is read in the tags of exiftool (`-j -G1`); the end of the image and the trailer, in the bytes.
 """
@@ -39,6 +40,7 @@ def detect_motion_photo(data: bytes, tags: dict[str, Any]) -> dict[str, Any]:
 
 
 def _xmp_signals(tags: dict[str, Any]) -> list[str]:
+    """The Google signals, read in the XMP tags."""
     signals = []
     if str(tags.get("XMP-GCamera:MotionPhoto")) == "1":
         signals.append(XMP_GOOGLE_MOTION_PHOTO)
@@ -51,6 +53,7 @@ def _xmp_signals(tags: dict[str, Any]) -> list[str]:
 
 
 def _trailer_signals(data: bytes) -> list[str]:
+    """The Samsung signal and `trailing_data`, read in the bytes after the image."""
     signals = []
     try:
         zone = read_seft(data)
@@ -59,18 +62,17 @@ def _trailer_signals(data: bytes) -> list[str]:
     if zone is not None and zone.entry(SAMSUNG_MOTION_PHOTO_ENTRY) is not None:
         signals.append(SAMSUNG_MOTION_PHOTO_DATA)
 
-    image = _image_span(data)
+    image = _image_end(data)
     if image is not None:
-        image_end, known = image
-        if zone is not None:
-            known.append((zone.start, zone.end))
+        image_end, following_images = image
+        known = following_images + (zone.described_spans() if zone is not None else [])
         if _has_gap(image_end, len(data), known):
             signals.append(TRAILING_DATA)
     return signals
 
 
-def _image_span(data: bytes) -> tuple[int, list[Span]] | None:
-    """Where the image ends and the structures known to follow it, or None if the format or the file can't tell."""
+def _image_end(data: bytes) -> tuple[int, list[Span]] | None:
+    """Where the image ends and the images declared to follow it, or None if the format or the file can't tell."""
     fmt = detect_format(data[:64])
     try:
         if fmt == "jpeg":
@@ -159,8 +161,10 @@ def _mpf_images(data: bytes, tiff_start: int) -> list[Span]:
         spans = []
         for entry in range(tiff_start + value_offset, tiff_start + value_offset + length - 15, 16):
             _, size, offset = struct.unpack_from(f"{byte_order}III", data, entry)
-            if offset != 0:
-                spans.append((tiff_start + offset, tiff_start + offset + size))
+            start, end = tiff_start + offset, tiff_start + offset + size
+            # Only a JPEG inside the file is an image: a bogus entry must not explain trailing bytes
+            if offset != 0 and end <= len(data) and data[start : start + 3] == b"\xff\xd8\xff":
+                spans.append((start, end))
         return spans
     return []
 

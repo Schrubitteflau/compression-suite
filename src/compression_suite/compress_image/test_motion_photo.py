@@ -90,7 +90,8 @@ def _assert_refused(result: Result, fake: MagicMock, out: Path) -> list[str]:
     return error["details"]["signals"]
 
 
-def _motion_photo_result(result) -> dict:
+def _motion_photo_result(result: Result) -> dict:
+    """Check the compression succeeded and return its `motion_photo` result."""
     assert result.exit_code == 0, result.output
     return json.loads(result.stdout)["result"]["motion_photo"]
 
@@ -223,6 +224,27 @@ def test_bytes_outside_the_seft_zone_are_trailing_data(tmp_path: Path):
     data = S23_PHOTO.read_bytes()
     image_end = data.index(b"Image_UTC_Data") - 8
     src = _write(tmp_path, "photo.jpg", data[:image_end] + b"unexplained" + data[image_end:])
+    out = tmp_path / "out.jpg"
+    assert _assert_refused(*_invoke(src, out), out) == ["trailing_data"]
+
+
+def test_bytes_between_seft_entries_are_trailing_data(tmp_path: Path):
+    """Bytes slipped between the last entry and the index are outside every entry the index describes."""
+    data = S23_PHOTO.read_bytes()
+    index_start = len(data) - 8 - struct.unpack("<I", data[-8:-4])[0]
+    src = _write(tmp_path, "photo.jpg", data[:index_start] + b"unexplained" + data[index_start:])
+    out = tmp_path / "out.jpg"
+    assert _assert_refused(*_invoke(src, out), out) == ["trailing_data"]
+
+
+def test_bogus_mpf_entry_does_not_explain_trailing_bytes(tmp_path: Path):
+    """An MP entry pointing at no JPEG, here the appended bytes themselves, is not an image."""
+    mpo = io.BytesIO()
+    Image.new("RGB", (64, 48)).save(mpo, format="MPO", save_all=True, append_images=[Image.new("RGB", (32, 24))])
+    data = bytearray(mpo.getvalue())
+    second = data.index(b"\xff\xd8\xff", 2)
+    data[second : second + 3] = b"XYZ"
+    src = _write(tmp_path, "photo.jpg", bytes(data))
     out = tmp_path / "out.jpg"
     assert _assert_refused(*_invoke(src, out), out) == ["trailing_data"]
 

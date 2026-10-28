@@ -101,7 +101,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 
 A motion photo carries a short video after its image. Tinify only returns the image, so `compress-image` detects a motion photo **before** calling Tinify and refuses it (`motion_photo`, exit 20) without using a credit. `details.signals` lists every signal found; one is enough to refuse. `--allow-motion-photo-loss` compresses it anyway.
 
-The detector (`utils/motion_photo.py`, shared with `inspect`) looks for these signals, in this order:
+The detector (`utils/motion_photo.py`, meant to be reused by `inspect`) looks for these signals, in this order:
 
 | Signal | Found when |
 |---|---|
@@ -111,8 +111,9 @@ The detector (`utils/motion_photo.py`, shared with `inspect`) looks for these si
 | `samsung_motion_photo_data` | the Samsung end-of-file trailer (`SEFT`) has a `MotionPhoto_Data` entry |
 | `trailing_data` | bytes after the end of the image that no known structure explains |
 
-- **End of the image**: the EOI of the main JPEG image, the end of the PNG `IEND` chunk, the RIFF size of a WebP. Other formats (AVIF) are not checked for trailing bytes.
-- **Known structures** after the image: the images declared by a JPEG's MPF segment, and a readable Samsung `SEFT` zone (read by `utils/seft.py`). A `SEFT` zone without `MotionPhoto_Data`, as on many S23 photos, gives no signal. An unreadable index, or bytes outside the zone it describes, give `trailing_data`.
+- **End of the image**: the EOI of the main JPEG image, the end of the PNG `IEND` chunk, the RIFF size of a WebP. Other formats (AVIF), and a file whose end can't be found (truncated), are not checked for trailing bytes.
+- **Known structures** after the image: the images declared by a JPEG's MPF segment (each must be a JPEG inside the file), and the entries and index of a readable Samsung `SEFT` zone (read by `utils/seft.py`). A `SEFT` zone without `MotionPhoto_Data`, as on many S23 photos, gives no signal. An unreadable index, or bytes outside the entries it describes, give `trailing_data`.
+- Any unexplained byte is refused, even zero padding after the EOI: on 543 real phone photos (92 with a `SEFT` zone), only one WhatsApp JPEG carrying 900 KB of unknown bytes after its image was flagged.
 - The video of a Google motion photo follows the image without any of these structures, so it also gives `trailing_data`. On a Samsung phone writing both formats, the video lies inside the `SEFT` zone: no `trailing_data`.
 
 ## I/O design
