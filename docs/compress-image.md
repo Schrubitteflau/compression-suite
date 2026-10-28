@@ -46,16 +46,50 @@ compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOU
 
 ### `--metadata=keep` (default)
 
-After Tinify compression, metadata from the original image is copied back to the compressed file using exiftool. A blacklist approach is used — all tags are copied except those that become invalid after compression:
+Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no Samsung trailer. After the compression, metadata from the original image is copied back to the compressed file using exiftool. A blacklist approach is used — all tags are copied (`-all:all`, plus the ICC profile, the IFD0 dimensions and the Interop tags, which exiftool only copies when named) except those that become invalid after compression:
 
-- **ThumbnailImage, ThumbnailOffset, ThumbnailLength**: reference the original image, stale after compression
-- **Compression**: describes the original encoding (e.g., Baseline DCT), the compressed file uses Progressive DCT
+- **ThumbnailImage**: the EXIF thumbnail shows the original image, it is removed on purpose
+- **Compression**: belongs to the thumbnail
 
-This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, orientation, and all other tags.
+This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, orientation, the colour profile (e.g. the S23's "DCI-P3 D65") and all other tags. What can't be kept is listed in the metadata diff below.
 
 ### `--metadata=strip`
 
-The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space).
+The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande".
+
+### Metadata diff (`--json`)
+
+`result.metadata` compares the tags of the original and of the compressed file, read by the pinned exiftool on every group (`exiftool -j -G1 -a`, tags keyed `Group:Name`):
+
+```json
+{
+  "important": [
+    {"key": "capture_date", "before": "2026:09:25 20:57:02", "after": "2026:09:25 20:57:02", "source": "ExifIFD:DateTimeOriginal", "status": "same"},
+    {"key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription", "status": "same"}
+  ],
+  "unexpected_losses": [{"tag": "PNG:ImageWidth", "kind": "changed", "before": 320, "after": 160}],
+  "expected_losses": [{"tag": "Samsung:TimeStamp", "before": "2026:09:25 20:57:02.918+02:00", "reason": "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"}],
+  "added": [{"tag": "JFIF:JFIFVersion", "after": 1.01}],
+  "before": {"IFD0:Make": "samsung", "...": "..."},
+  "after": {"IFD0:Make": "samsung", "...": "..."}
+}
+```
+
+- **Ignored groups**: `System` (file name, size, file system dates and permissions), `Composite` (values computed by exiftool) and `ExifTool` (version, warnings). They are not in `before` and `after` either.
+- **`important`**: always the same fields, in this order, even when intact. `status` is `same`, `lost`, `changed` or `absent` (missing on both sides); `source` is the tag the value comes from.
+  - `capture_date`: `ExifIFD:DateTimeOriginal`, else the XMP or PNG date, else the file's mtime (`source: "file_mtime"`, file to file only)
+  - `gps`: `{latitude, latitude_ref, longitude, longitude_ref, altitude, altitude_ref}` (the parts present)
+  - `camera`: `{make, model}`
+  - `dimensions`: `{width, height}`
+  - `orientation`
+  - `color_profile`: description of the ICC profile, `null` if none
+- **`expected_losses`** (`tag`, `before`, `reason`): losses decided by compression-suite, declared in `compress_image/main.py` next to the exiftool exclusions:
+  - the EXIF thumbnail (`IFD1:*`) and its `Compression`
+  - the fields of the Samsung end-of-file trailer (`Samsung:*`, read in the `SEFT` zone), which Tinify drops and exiftool can't write
+  - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
+- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
+- **`added`** (`tag`, `after`): tags that appear after the compression, for information.
+- Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
 
 ## I/O design
 
@@ -80,12 +114,13 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
   "result": {
     "input": {"path": "photo.jpg", "format": "jpeg", "size_bytes": 2481152, "mtime": "2022-08-09T10:11:12.654321+00:00"},
     "output": {"path": "compressed.jpg", "format": "jpeg", "size_bytes": 812345, "mtime": "2022-08-09T10:11:12.654321+00:00"},
-    "tinify": {"compressions_this_month": 42}
+    "tinify": {"compressions_this_month": 42},
+    "metadata": {"important": [], "unexpected_losses": [], "expected_losses": [], "added": [], "before": {}, "after": {}}
   }
 }
 ```
 
-`mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
+`metadata` is the metadata diff described above. `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
 
 ```json
 {

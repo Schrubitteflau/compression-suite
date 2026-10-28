@@ -16,6 +16,7 @@ from tinify import ConnectionError as TinifyConnectionError
 
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
+from compression_suite.utils.metadata_diff import ExpectedLoss, diff_metadata, read_metadata
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
@@ -24,15 +25,49 @@ HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 
 SUPPORTED_FORMATS = ("jpeg", "png", "webp", "avif")
 
-EXIFTOOL_EXCLUDE_TAGS = [
-    "-ThumbnailImage=",
-    "-Compression=",
+THUMBNAIL_REASON = "miniature EXIF retirée exprès : elle montrerait l'image d'origine"
+SAMSUNG_TRAILER_REASON = "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"
+REENCODING_REASON = "réencodage"
+STRIP_REASON = "métadonnées retirées à la demande"
+
+# Losses decided by compression-suite, shown with their reason in the metadata diff. Those with an
+# `excluded_tag` are what EXIFTOOL_EXCLUDE_TAGS keeps from being copied back, so both can't diverge.
+# A loss found on a real sample must first be fixed by a copy (EXIFTOOL_EXTRA_TAGS): only a loss
+# that can't be avoided belongs here.
+EXPECTED_LOSSES = [
+    ExpectedLoss("IFD1:ThumbnailImage", THUMBNAIL_REASON, excluded_tag="ThumbnailImage"),
+    ExpectedLoss("IFD1:Compression", "propre à la miniature EXIF, retirée avec elle", excluded_tag="Compression"),
+    ExpectedLoss("IFD1:*", THUMBNAIL_REASON),  # size, offset and length of the removed thumbnail
+    ExpectedLoss("Samsung:*", SAMSUNG_TRAILER_REASON),  # read in the SEFT trailer, which Tinify drops
+    # Encoding parameters outside the File group, which Tinify chooses anew
+    *(
+        ExpectedLoss(tag, REENCODING_REASON)
+        for tag in (
+            "PNG:BitDepth",
+            "PNG:ColorType",
+            "PNG:Compression",
+            "PNG:Filter",
+            "PNG:Interlace",
+            "PNG:Palette",
+            "PNG:SignificantBits",
+            "PNG:Transparency",
+            "QuickTime:ImagePixelDepth",
+            "QuickTime:MediaDataSize",
+            "QuickTime:MediaDataOffset",
+        )
+    ),
 ]
 
-# Tags that -all:all doesn't copy and must be listed explicitly.
+EXIFTOOL_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in EXPECTED_LOSSES if loss.excluded_tag]
+
+# Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
+# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost).
 EXIFTOOL_EXTRA_TAGS = [
     "-InteropIndex",
     "-InteropVersion",
+    "-ICC_Profile",
+    "-IFD0:ImageWidth",
+    "-IFD0:ImageHeight",
 ]
 
 
@@ -193,46 +228,51 @@ def compress_image(
 
     compressed_buffer = call_tinify(prepare_source)
 
-    # Metadata preservation needs the original on disk for exiftool
+    # exiftool needs the original on disk, to copy its metadata and to diff them
     stdin_original = None
-    exiftool_source = None
-    if metadata == "keep":
-        if original_path is None:
-            stdin_original = tempfile.NamedTemporaryFile(suffix=f".{input_format}", delete=False)
-            stdin_original.write(buffer)
-            stdin_original.close()
-            exiftool_source = Path(stdin_original.name)
-        else:
-            exiftool_source = original_path
+    if original_path is None:
+        stdin_original = tempfile.NamedTemporaryFile(suffix=f".{input_format}", delete=False)
+        stdin_original.write(buffer)
+        stdin_original.close()
+        exiftool_source = Path(stdin_original.name)
+    else:
+        exiftool_source = original_path
 
-    def copy_metadata(compressed_path: Path) -> None:
-        """Copy the original's metadata onto the compressed file, unless metadata is stripped."""
-        if exiftool_source is not None:
-            preserve_metadata(exiftool, exiftool_source, compressed_path)
-
-    def apply_metadata_and_dates(compressed_path: Path) -> bytes:
-        """Copy the metadata, read the final bytes, then give the file the original's atime and mtime.
+    def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any]]:
+        """Copy the metadata, read the final bytes and tags, then give the file the original's atime and mtime.
 
         The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
         """
-        copy_metadata(compressed_path)
+        if metadata == "keep":
+            preserve_metadata(exiftool, exiftool_source, compressed_path)
         final_buffer = compressed_path.read_bytes()
+        final_tags = read_metadata(exiftool, compressed_path)
         if original_stat is not None:
             os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-        return final_buffer
+        return final_buffer, final_tags
 
     try:
+        original_tags = read_metadata(exiftool, exiftool_source)
         if output_path is not None:
-            final_buffer = write_atomically(output_path, compressed_buffer, apply_metadata_and_dates)
+            final_buffer, final_tags = write_atomically(output_path, compressed_buffer, apply_metadata_and_dates)
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                final_buffer = apply_metadata_and_dates(tmp_compressed)
+                final_buffer, final_tags = apply_metadata_and_dates(tmp_compressed)
             sys.stdout.buffer.write(final_buffer)
     finally:
         if stdin_original is not None:
             Path(stdin_original.name).unlink(missing_ok=True)
+
+    output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
+    input_mtime = iso_mtime(original_stat) if original_stat is not None else None
+    metadata_diff = diff_metadata(
+        original_tags,
+        final_tags,
+        EXPECTED_LOSSES if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
+        mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
+    )
 
     output_size = len(final_buffer)
     compression_count = tinify.compression_count
@@ -241,21 +281,25 @@ def compress_image(
     ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
     console.print(f"[bold green]Compressed:[/bold green] {input_size:,} → {output_size:,} bytes ({ratio:.1f}% reduction)")
     console.print(f"[dim]API compressions used this month: {compression_count}[/dim]")
+    if metadata_diff["unexpected_losses"]:
+        lost = ", ".join(loss["tag"] for loss in metadata_diff["unexpected_losses"])
+        console.print(f"[bold yellow]Unexpected metadata losses:[/bold yellow] {lost}", highlight=False)
 
     return {
         "input": {
             "path": input_file,
             "format": input_format,
             "size_bytes": input_size,
-            "mtime": iso_mtime(original_stat) if original_stat is not None else None,
+            "mtime": input_mtime,
         },
         "output": {
             "path": output,
             "format": detect_format(final_buffer[:HEADER_SIZE]),
             "size_bytes": output_size,
-            "mtime": iso_mtime(output_path.stat()) if output_path is not None else None,
+            "mtime": output_mtime,
         },
         "tinify": {"compressions_this_month": compression_count},
+        "metadata": metadata_diff,
     }
 
 
