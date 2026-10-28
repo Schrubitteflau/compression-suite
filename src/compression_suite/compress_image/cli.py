@@ -1,13 +1,12 @@
 """CLI command for compress-image."""
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
-import tinify
 import typer
 
 from compression_suite.compress_image.main import main
-from compression_suite.utils.cli import cli_error_handler, stderr_console
+from compression_suite.utils.contract import CommandError, ErrorCode, run_command
 
 
 class MetadataMode(str, Enum):
@@ -16,7 +15,6 @@ class MetadataMode(str, Enum):
     STRIP = "strip"
 
 
-@cli_error_handler
 def compress_image(
     input_file: Optional[str] = typer.Argument(None, help="Path to input image file (omit to read from stdin)"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Path to output file (omit to write to stdout)"),
@@ -24,6 +22,7 @@ def compress_image(
     metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),
     disable_hard_limit: bool = typer.Option(False, "--disable-hard-limit", help="Bypass the 15MB input size limit"),
+    json_output: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """
@@ -32,8 +31,12 @@ def compress_image(
     Supports JPEG, PNG, WebP, and AVIF. Reads from a file or stdin,
     writes to a file or stdout. Metadata is preserved by default using exiftool.
     """
-    try:
-        main(
+    def run() -> dict[str, Any]:
+        if json_output and output is None:
+            raise CommandError(
+                ErrorCode.USAGE_ERROR, "--json requires --output: stdout is reserved for the JSON document",
+            )
+        return main(
             input_file=input_file,
             output=output,
             api_key=api_key,
@@ -42,15 +45,5 @@ def compress_image(
             disable_hard_limit=disable_hard_limit,
             verbose=verbose,
         )
-    except tinify.AccountError as e:
-        stderr_console.print(f"[bold red]API account error:[/bold red] {e}")
-        raise typer.Exit(code=12 if "limit" in str(e).lower() else 11)
-    except tinify.ClientError as e:
-        stderr_console.print(f"[bold red]API client error:[/bold red] {e}")
-        raise typer.Exit(code=11)
-    except tinify.ServerError as e:
-        stderr_console.print(f"[bold red]API server error:[/bold red] {e}")
-        raise typer.Exit(code=10)
-    except tinify.ConnectionError as e:
-        stderr_console.print(f"[bold red]Connection error:[/bold red] {e}")
-        raise typer.Exit(code=10)
+
+    run_command("compress-image", json_output, run)
