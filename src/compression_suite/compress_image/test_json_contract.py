@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -360,3 +361,39 @@ def test_human_mode_stdin_to_stdout_binary():
     assert result.exit_code == 0, result.stderr
     assert result.stdout_bytes == compressed
 
+
+def test_output_permissions_follow_umask(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    out = tmp_path / "out.jpg"
+    old_umask = os.umask(0o022)
+    try:
+        with _fake_tinify():
+            result = _invoke(str(src), "--output", str(out), "--json")
+    finally:
+        os.umask(old_umask)
+    assert result.exit_code == 0, result.output
+    assert out.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--metadata", "bogus"),
+        ("--unknown-flag",),
+    ],
+)
+def test_typer_usage_errors_give_json_usage_error(tmp_path: Path, args: tuple[str, ...]):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json", *args)
+    _assert_error(result, "usage_error", 2)
+    _assert_tinify_not_called(fake)
+
+
+def test_typer_usage_error_without_json_keeps_typer_message(tmp_path: Path):
+    result = _invoke(str(tmp_path / "x.jpg"), "--metadata", "bogus")
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "bogus" in result.stderr

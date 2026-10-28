@@ -15,7 +15,9 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
+import click
 import typer
+from typer.core import TyperCommand
 
 from compression_suite.utils.cli import stderr_console
 
@@ -39,6 +41,7 @@ class ErrorCode(str, Enum):
 
     @property
     def exit_code(self) -> int:
+        """Process exit code bound to this error code."""
         return EXIT_CODES[self]
 
 
@@ -68,10 +71,12 @@ class CommandError(Exception):
 
 
 def success_envelope(command: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Build the JSON document of a successful command."""
     return {"schema_version": SCHEMA_VERSION, "ok": True, "command": command, "result": result}
 
 
 def error_envelope(command: str, error: CommandError) -> dict[str, Any]:
+    """Build the JSON document of a failed command."""
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": False,
@@ -80,14 +85,15 @@ def error_envelope(command: str, error: CommandError) -> dict[str, Any]:
     }
 
 
-def run_command(command: str, json_mode: bool, func: Callable[[], dict[str, Any]]) -> None:
+def run_command(command: str, json_mode: bool, body: Callable[[], dict[str, Any]]) -> None:
     """Run a command body and report its outcome according to the contract.
 
     In JSON mode, the envelope is the only thing written on stdout. Otherwise errors
     are printed on stderr. Either way, failures exit with the code bound to their error code.
     """
     try:
-        result = func()
+        result = body()
+        document = json.dumps(success_envelope(command, result)) if json_mode else None
     except (typer.Exit, SystemExit):
         raise
     except CommandError as e:
@@ -97,8 +103,8 @@ def run_command(command: str, json_mode: bool, func: Callable[[], dict[str, Any]
     except Exception as e:
         error = CommandError(ErrorCode.INTERNAL_ERROR, f"Unexpected error: {e}")
     else:
-        if json_mode:
-            typer.echo(json.dumps(success_envelope(command, result)))
+        if document is not None:
+            typer.echo(document)
         return
 
     if json_mode:
@@ -106,3 +112,18 @@ def run_command(command: str, json_mode: bool, func: Callable[[], dict[str, Any]
     else:
         stderr_console.print(f"[bold red]Error:[/bold red] {error.message}", highlight=False)
     raise typer.Exit(code=error.code.exit_code)
+
+
+class JsonUsageErrorCommand(TyperCommand):
+    """Typer command that reports its own usage errors (bad options) as a JSON envelope under `--json`."""
+
+    def make_context(self, info_name, args, parent=None, **extra):
+        json_mode = "--json" in args
+        try:
+            return super().make_context(info_name, args, parent=parent, **extra)
+        except click.UsageError as e:
+            if not json_mode:
+                raise
+            error = CommandError(ErrorCode.USAGE_ERROR, e.format_message())
+            typer.echo(json.dumps(error_envelope(self.name or info_name or "", error)))
+            raise typer.Exit(code=ErrorCode.USAGE_ERROR.exit_code) from e

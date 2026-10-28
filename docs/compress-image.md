@@ -105,7 +105,7 @@ Exit codes are the same with or without `--json`.
 | Error code | Exit | Meaning | `details` |
 |---|---|---|---|
 | — | 0 | Success | |
-| `usage_error` | 2 | Invalid options (e.g. `--json` without `--output`) | |
+| `usage_error` | 2 | Invalid options (unknown flag, bad value, `--json` without `--output`) | |
 | `tinify_unavailable` | 10 | Tinify server error or network failure | |
 | `api_key_invalid` | 11 | Key rejected, Tinify client error | |
 | `quota_exceeded` | 12 | Monthly API quota exceeded | |

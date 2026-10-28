@@ -22,7 +22,7 @@ def compress_image(
     metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),
     disable_hard_limit: bool = typer.Option(False, "--disable-hard-limit", help="Bypass the 15MB input size limit"),
-    json_output: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
+    json_mode: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """
@@ -31,8 +31,8 @@ def compress_image(
     Supports JPEG, PNG, WebP, and AVIF. Reads from a file or stdin,
     writes to a file or stdout. Metadata is preserved by default using exiftool.
     """
-    def run() -> dict[str, Any]:
-        if json_output and output is None:
+    def body() -> dict[str, Any]:
+        if json_mode and output is None:
             raise CommandError(
                 ErrorCode.USAGE_ERROR, "--json requires --output: stdout is reserved for the JSON document",
             )
@@ -46,4 +46,4 @@ def compress_image(
             verbose=verbose,
         )
 
-    run_command("compress-image", json_output, run)
+    run_command("compress-image", json_mode, body)

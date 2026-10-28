@@ -43,6 +43,7 @@ def validate_input_file(path: str) -> Path:
 
 
 def check_format(detected_format: str) -> None:
+    """Reject any format Tinify can't compress."""
     if detected_format not in SUPPORTED_FORMATS:
         raise CommandError(
             ErrorCode.UNSUPPORTED_FORMAT,
@@ -52,6 +53,7 @@ def check_format(detected_format: str) -> None:
 
 
 def check_size(size: int, disable_hard_limit: bool) -> None:
+    """Reject inputs above the hard limit, unless it is disabled."""
     if not disable_hard_limit and size > HARD_LIMIT_BYTES:
         raise CommandError(
             ErrorCode.FILE_TOO_LARGE,
@@ -93,16 +95,25 @@ def preserve_metadata(original_path: Path, compressed_path: Path):
         raise CommandError(ErrorCode.METADATA_COPY_FAILED, f"exiftool failed: {result.stderr.strip()}")
 
 
-def write_atomically(output_path: Path, data: bytes, finalize: Callable[[Path], None] | None = None) -> None:
-    """Write to a temporary file in the destination folder, optionally post-process it, then rename it."""
+def current_umask() -> int:
+    umask = os.umask(0)
+    os.umask(umask)
+    return umask
+
+
+def write_atomically(output_path: Path, data: bytes, finalize: Callable[[Path], None]) -> None:
+    """Write to a temporary file in the destination folder, post-process it, then rename it.
+
+    The file gets the permissions a plain write would give (0666 minus the umask), not mkstemp's 0600.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=output_path.parent, prefix=f".{output_path.name}.", suffix=".tmp")
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        if finalize is not None:
-            finalize(tmp_path)
+        tmp_path.chmod(0o666 & ~current_umask())
+        finalize(tmp_path)
         os.replace(tmp_path, output_path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)

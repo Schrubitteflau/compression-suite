@@ -42,5 +42,6 @@ def _ftyp_brands(header: bytes) -> set[bytes]:
 
 
 def detect_file_format(path: Path) -> str:
+    """Detect the format of a file from its first bytes."""
     with path.open("rb") as f:
         return detect_format(f.read(HEADER_SIZE))
