@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.utils.pinned_tools import resolve_tool
 
 runner = CliRunner()
 
@@ -37,7 +38,7 @@ def test_file_to_file_metadata_keep(tmp_path: Path):
     assert result.exit_code == 0, result.stderr
     assert out.read_bytes()[:2] == b"\xff\xd8"
     exif = subprocess.run(
-        ["exiftool", "-Make", str(out)], capture_output=True, text=True,
+        [str(resolve_tool("exiftool")), "-Make", str(out)], capture_output=True, text=True,
     )
     assert "TestCamera" in exif.stdout
 

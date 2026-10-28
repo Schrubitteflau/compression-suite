@@ -15,8 +15,8 @@ from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
 
 from compression_suite.utils.contract import CommandError, ErrorCode
-from compression_suite.utils.dependencies import check_exiftool
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
+from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
 
@@ -82,10 +82,10 @@ def call_tinify(prepare_source: Callable[[], Any]) -> bytes:
         raise CommandError(ErrorCode.TINIFY_UNAVAILABLE, f"Connection error: {e}") from e
 
 
-def preserve_metadata(original_path: Path, compressed_path: Path):
+def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path):
     """Copy metadata from original to compressed file using exiftool, excluding problematic tags."""
     cmd = [
-        "exiftool",
+        str(exiftool),
         "-TagsFromFile", str(original_path),
         "-all:all",
         *EXIFTOOL_EXTRA_TAGS,
@@ -158,9 +158,9 @@ def compress_image(
     """
     console = Console(stderr=True)
 
-    exiftool_version = check_exiftool()
+    exiftool = resolve_tool("exiftool")
     if verbose:
-        console.print(f"[dim]exiftool version: {exiftool_version}[/dim]")
+        console.print(f"[dim]exiftool: {exiftool}[/dim]")
 
     tinify.key = api_key
 
@@ -208,7 +208,7 @@ def compress_image(
     def copy_metadata(compressed_path: Path) -> None:
         """Copy the original's metadata onto the compressed file, unless metadata is stripped."""
         if exiftool_source is not None:
-            preserve_metadata(exiftool_source, compressed_path)
+            preserve_metadata(exiftool, exiftool_source, compressed_path)
 
     def apply_metadata_and_dates(compressed_path: Path) -> bytes:
         """Copy the metadata, read the final bytes, then give the file the original's atime and mtime.

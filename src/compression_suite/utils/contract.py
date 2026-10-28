@@ -35,6 +35,7 @@ class ErrorCode(str, Enum):
     INPUT_NOT_FOUND = "input_not_found"
     OUTPUT_EXISTS = "output_exists"
     METADATA_COPY_FAILED = "metadata_copy_failed"
+    TOOL_MISSING = "tool_missing"
     USAGE_ERROR = "usage_error"
     INTERRUPTED = "interrupted"
     INTERNAL_ERROR = "internal_error"
@@ -54,6 +55,7 @@ EXIT_CODES: dict[ErrorCode, int] = {
     ErrorCode.INPUT_NOT_FOUND: 23,
     ErrorCode.OUTPUT_EXISTS: 24,
     ErrorCode.METADATA_COPY_FAILED: 25,
+    ErrorCode.TOOL_MISSING: 30,
     ErrorCode.USAGE_ERROR: 2,
     ErrorCode.INTERRUPTED: 130,
     ErrorCode.INTERNAL_ERROR: 50,

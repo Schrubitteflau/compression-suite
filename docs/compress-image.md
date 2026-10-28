@@ -6,7 +6,8 @@ Supports JPEG, PNG, WebP, and AVIF — any format accepted by Tinify. The API ac
 
 ## Prerequisites
 
-- **exiftool** >= 11.88 (major version 11): required for metadata preservation (`--metadata=keep`)
+- **Pinned exiftool**: installed in the project by `just install-tools`, at the version of `pinned-tools.json`. The exiftool found in `PATH` (e.g. `/usr/bin/exiftool`) is never used
+- **Perl**: needed to run exiftool
 - **Tinify API key**: get one at https://tinypng.com/developers (500 free compressions/month)
 
 ## Usage
@@ -65,7 +66,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 - The output is written atomically: a temporary file in the destination folder, then a rename
 - The output is written even when it is larger than the original
 - When reading from a file, the output gets the original's atime and mtime, applied after exiftool rewrites it (with or without `--json`, whatever `--metadata`). From stdin, there is no date to carry over
-- Every check that can fail without Tinify (input, format, size, existing output) runs before the API call, so no credit is wasted
+- Every check that can fail without Tinify (pinned exiftool, input, format, size, existing output) runs before the API call, so no credit is wasted
 
 ## JSON output (`--json`)
 
@@ -115,6 +116,7 @@ Exit codes are the same with or without `--json`.
 | `input_not_found` | 23 | Input missing or not a file | |
 | `output_exists` | 24 | Output exists without `--overwrite`, or is a directory | |
 | `metadata_copy_failed` | 25 | exiftool failed to copy metadata back | |
+| `tool_missing` | 30 | Pinned exiftool not installed, not runnable, or of another version than the manifest's | `tool`, `expected_version`, `install_command` |
 | `internal_error` | 50 | Any other error | |
 | `interrupted` | 130 | Interrupted by user (Ctrl+C) | |
 

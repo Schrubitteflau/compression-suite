@@ -13,8 +13,11 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.utils.pinned_tools import load_manifest
 
 runner = CliRunner()
+
+EXIFTOOL_VERSION = load_manifest()["exiftool"].version
 
 FTYP_AVIF = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf"
 FTYP_HEIC = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"
@@ -176,13 +179,15 @@ def test_overwrite_replaces_existing_output(tmp_path: Path):
     assert out.read_bytes()[:2] == b"\xff\xd8"
 
 
-def test_works_without_jpegoptim_in_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    exiftool = shutil.which("exiftool")
-    assert exiftool is not None
+def test_works_with_only_perl_in_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The pinned exiftool is used, never one from PATH, and jpegoptim is not needed: only Perl is."""
+    perl = shutil.which("perl")
+    assert perl is not None
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "exiftool").symlink_to(exiftool)
+    (bin_dir / "perl").symlink_to(perl)
     monkeypatch.setenv("PATH", str(bin_dir))
+    assert shutil.which("exiftool") is None
     assert shutil.which("jpegoptim") is None
 
     src = tmp_path / "photo.jpg"
@@ -269,6 +274,37 @@ def test_json_requires_output(tmp_path: Path):
     with _fake_tinify() as fake:
         result = _invoke(str(src), "--json")
     _assert_error(result, "usage_error", 2)
+    _assert_tinify_not_called(fake)
+
+
+def test_pinned_exiftool_missing_gives_tool_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tmp_path / "no-tools"))
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    error = _assert_error(result, "tool_missing", 30)
+    assert error["details"]["tool"] == "exiftool"
+    assert error["details"]["install_command"] == "just install-tools"
+    assert "just install-tools" in error["message"]
+    _assert_tinify_not_called(fake)
+
+
+def test_pinned_exiftool_with_wrong_version_gives_tool_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    tools_dir = tmp_path / "tools"
+    fake_dir = tools_dir / f"exiftool-{EXIFTOOL_VERSION}"
+    fake_dir.mkdir(parents=True)
+    fake_exiftool = fake_dir / "exiftool"
+    fake_exiftool.write_text("#!/bin/sh\necho 11.88\n")
+    fake_exiftool.chmod(0o755)
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tools_dir))
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    error = _assert_error(result, "tool_missing", 30)
+    assert error["details"]["tool"] == "exiftool"
+    assert "11.88" in error["message"]
     _assert_tinify_not_called(fake)
 
 

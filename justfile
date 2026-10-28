@@ -4,8 +4,12 @@
 list:
     @just --list
 
+# Download, verify and install the pinned tools of pinned-tools.json into .tools/
+install-tools:
+    uv run --python=3.13 python -m compression_suite.utils.pinned_tools
+
 # Run all the formatting, linting, and testing commands
-qa:
+qa: install-tools
     uv run --python=3.13 --extra test ruff format .
     uv run --python=3.13 --extra test ruff check . --fix
     uv run --python=3.13 --extra test ruff check --select I --fix .
@@ -13,14 +17,14 @@ qa:
     uv run --python=3.13 --extra test pytest .
 
 # Run all the tests for all the supported Python versions
-testall:
+testall: install-tools
     uv run --python=3.10 --extra test pytest
     uv run --python=3.11 --extra test pytest
     uv run --python=3.12 --extra test pytest
     uv run --python=3.13 --extra test pytest
 
 # Run all the tests, but allow for arguments to be passed
-test *ARGS:
+test *ARGS: install-tools
     @echo "Running with arg: {{ARGS}}"
     uv run --python=3.13 --extra test pytest {{ARGS}}
 

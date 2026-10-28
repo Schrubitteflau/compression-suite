@@ -1,0 +1,11 @@
+{
+  "exiftool": {
+    "version": "13.55",
+    "url": "https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.55.tar.gz",
+    "sha256": "5f4c81d34ad406538c2871ad72dbfceb5d9b412b2f16cbbeb4d712d270846667",
+    "archive_root": "Image-ExifTool-13.55",
+    "executable": "exiftool",
+    "version_args": ["-ver"],
+    "version_pattern": "^(\\S+)$"
+  }
+}
