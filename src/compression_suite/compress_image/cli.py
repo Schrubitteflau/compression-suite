@@ -22,6 +22,9 @@ def compress_image(
     metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),
     disable_hard_limit: bool = typer.Option(False, "--disable-hard-limit", help="Bypass the 15MB input size limit"),
+    allow_motion_photo_loss: bool = typer.Option(
+        False, "--allow-motion-photo-loss", help="Compress a motion photo anyway, losing its video",
+    ),
     json_mode: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
@@ -44,6 +47,7 @@ def compress_image(
             metadata=metadata.value,
             overwrite=overwrite,
             disable_hard_limit=disable_hard_limit,
+            allow_motion_photo_loss=allow_motion_photo_loss,
             verbose=verbose,
         )
 

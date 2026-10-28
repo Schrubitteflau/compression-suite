@@ -25,6 +25,9 @@ cat photo.jpg | compression_suite compress-image --api-key=YOUR_KEY --metadata=s
 # Override the 15MB safety limit
 compression_suite compress-image huge.png --output out.png --api-key=YOUR_KEY --disable-hard-limit
 
+# Compress a motion photo anyway, losing its video
+compression_suite compress-image motion.jpg --output out.jpg --api-key=YOUR_KEY --allow-motion-photo-loss
+
 # Machine-readable output (one JSON document on stdout, --output is required)
 compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOUR_KEY --json
 ```
@@ -39,6 +42,7 @@ compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOU
 | `--metadata` | `keep` | `keep` (preserve via exiftool) or `strip` |
 | `--overwrite` | `false` | Overwrite output file if it exists |
 | `--disable-hard-limit` | `false` | Bypass the 15MB input size limit |
+| `--allow-motion-photo-loss` | `false` | Compress a motion photo anyway, losing its video |
 | `--json` | `false` | Write a single JSON document on stdout (requires `--output`) |
 | `--verbose`, `-v` | `false` | Enable verbose logging |
 
@@ -93,6 +97,24 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.
 - Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
 
+## Motion photos
+
+A motion photo carries a short video after its image. Tinify only returns the image, so `compress-image` detects a motion photo **before** calling Tinify and refuses it (`motion_photo`, exit 20) without using a credit. `details.signals` lists every signal found; one is enough to refuse. `--allow-motion-photo-loss` compresses it anyway.
+
+The detector (`utils/motion_photo.py`, shared with `inspect`) looks for these signals, in this order:
+
+| Signal | Found when |
+|---|---|
+| `xmp_google_motion_photo` | XMP `GCamera:MotionPhoto` = 1 |
+| `xmp_google_micro_video` | XMP `GCamera:MicroVideo` = 1 (older Google format) |
+| `xmp_container_video` | a `video/*` item in the XMP `Container:Directory` |
+| `samsung_motion_photo_data` | the Samsung end-of-file trailer (`SEFT`) has a `MotionPhoto_Data` entry |
+| `trailing_data` | bytes after the end of the image that no known structure explains |
+
+- **End of the image**: the EOI of the main JPEG image, the end of the PNG `IEND` chunk, the RIFF size of a WebP. Other formats (AVIF) are not checked for trailing bytes.
+- **Known structures** after the image: the images declared by a JPEG's MPF segment, and a readable Samsung `SEFT` zone (read by `utils/seft.py`). A `SEFT` zone without `MotionPhoto_Data`, as on many S23 photos, gives no signal. An unreadable index, or bytes outside the zone it describes, give `trailing_data`.
+- The video of a Google motion photo follows the image without any of these structures, so it also gives `trailing_data`. On a Samsung phone writing both formats, the video lies inside the `SEFT` zone: no `trailing_data`.
+
 ## I/O design
 
 - Without `--json`, **stdout is reserved for binary image data** (when `--output` is omitted) — all reporting goes to stderr
@@ -102,7 +124,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 - The output is written atomically: a temporary file in the destination folder, then a rename
 - The output is written even when it is larger than the original
 - When reading from a file, the output gets the original's atime and mtime, applied after exiftool rewrites it (with or without `--json`, whatever `--metadata`). From stdin, there is no date to carry over
-- Every check that can fail without Tinify (pinned exiftool, input, format, size, existing output) runs before the API call, so no credit is wasted
+- Every check that can fail without Tinify (pinned exiftool, input, format, size, motion photo, existing output) runs before the API call, in this order, so no credit is wasted
 
 ## JSON output (`--json`)
 
@@ -116,13 +138,14 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
   "result": {
     "input": {"path": "photo.jpg", "format": "jpeg", "size_bytes": 2481152, "mtime": "2022-08-09T10:11:12.654321+00:00"},
     "output": {"path": "compressed.jpg", "format": "jpeg", "size_bytes": 812345, "mtime": "2022-08-09T10:11:12.654321+00:00"},
+    "motion_photo": {"detected": false, "signals": []},
     "tinify": {"compressions_this_month": 42},
     "metadata": {"important": [], "unexpected_losses": [], "expected_losses": [], "added": [], "before": {}, "after": {}}
   }
 }
 ```
 
-`metadata` is the metadata diff described above. `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
+`metadata` is the metadata diff described above. `motion_photo` is the detector's result: `detected` is `true` only when the loss was allowed with `--allow-motion-photo-loss`. `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
 
 ```json
 {
@@ -148,6 +171,7 @@ Exit codes are the same with or without `--json`.
 | `tinify_unavailable` | 10 | Tinify server error or network failure | |
 | `api_key_invalid` | 11 | Key rejected, Tinify client error | |
 | `quota_exceeded` | 12 | Monthly API quota exceeded | |
+| `motion_photo` | 20 | Motion photo detected without `--allow-motion-photo-loss` | `signals` |
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |
 | `input_not_found` | 23 | Input missing or not a file | |

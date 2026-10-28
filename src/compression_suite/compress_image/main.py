@@ -4,7 +4,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -23,6 +24,7 @@ from compression_suite.utils.metadata_diff import (
     pixel_transparency,
     read_metadata,
 )
+from compression_suite.utils.motion_photo import detect_motion_photo
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
@@ -116,6 +118,17 @@ def check_size(size: int, disable_hard_limit: bool) -> None:
         )
 
 
+def check_motion_photo(motion_photo: dict[str, Any], allow_motion_photo_loss: bool) -> None:
+    """Reject a motion photo, whose video Tinify would drop, unless its loss is allowed."""
+    if motion_photo["detected"] and not allow_motion_photo_loss:
+        raise CommandError(
+            ErrorCode.MOTION_PHOTO,
+            f"Motion photo detected ({', '.join(motion_photo['signals'])}): compressing it would drop its video. "
+            f"Use --allow-motion-photo-loss to compress it anyway.",
+            {"signals": motion_photo["signals"]},
+        )
+
+
 def call_tinify(prepare_source: Callable[[], Any]) -> bytes:
     """Run the Tinify compression, translating its exceptions into stable error codes."""
     try:
@@ -146,6 +159,20 @@ def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise CommandError(ErrorCode.METADATA_COPY_FAILED, f"exiftool failed: {result.stderr.strip()}")
+
+
+@contextmanager
+def file_on_disk(path: Path | None, data: bytes, suffix: str) -> Iterator[Path]:
+    """Yield `path`, or a temporary copy of `data` when it came from stdin: exiftool needs a file."""
+    if path is not None:
+        yield path
+        return
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+    try:
+        yield Path(tmp.name)
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
 
 
 def current_umask() -> int:
@@ -189,6 +216,7 @@ def compress_image(
     metadata: str,
     overwrite: bool,
     disable_hard_limit: bool,
+    allow_motion_photo_loss: bool,
     verbose: bool,
 ) -> dict[str, Any]:
     """Compress an image via Tinify API with optional metadata preservation.
@@ -201,6 +229,7 @@ def compress_image(
         metadata: "keep" to preserve metadata via exiftool, "strip" to discard.
         overwrite: Allow overwriting existing output file.
         disable_hard_limit: Bypass the 15MB hard limit.
+        allow_motion_photo_loss: Compress a motion photo anyway, losing its video.
         verbose: Enable verbose reporting.
 
     Returns:
@@ -224,51 +253,45 @@ def compress_image(
         check_format(input_format)
         input_size = original_stat.st_size
         check_size(input_size, disable_hard_limit)
+        original_buffer = original_path.read_bytes()
         prepare_source = lambda: tinify.from_file(str(original_path))
     else:
-        buffer = sys.stdin.buffer.read()
-        input_format = detect_format(buffer[:HEADER_SIZE])
+        original_buffer = sys.stdin.buffer.read()
+        input_format = detect_format(original_buffer[:HEADER_SIZE])
         check_format(input_format)
-        input_size = len(buffer)
+        input_size = len(original_buffer)
         check_size(input_size, disable_hard_limit)
-        prepare_source = lambda: tinify.from_buffer(buffer)
+        prepare_source = lambda: tinify.from_buffer(original_buffer)
 
-    output_path = Path(output) if output is not None else None
-    if output_path is not None and output_path.is_dir():
-        raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output}.")
-    if output_path is not None and output_path.exists() and not overwrite:
-        raise CommandError(
-            ErrorCode.OUTPUT_EXISTS, f"Output file already exists: {output}. Use --overwrite to replace.",
-        )
-
-    compressed_buffer = call_tinify(prepare_source)
-
-    # exiftool needs the original on disk, to copy its metadata and to diff them
-    stdin_original = None
-    if original_path is None:
-        stdin_original = tempfile.NamedTemporaryFile(suffix=f".{input_format}", delete=False)
-        stdin_original.write(buffer)
-        stdin_original.close()
-        exiftool_source = Path(stdin_original.name)
-    else:
-        exiftool_source = original_path
-
-    def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None]:
-        """Copy the metadata, read the final bytes, tags and transparency, then give the file the original's dates.
-
-        The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
-        """
-        if metadata == "keep":
-            preserve_metadata(exiftool, exiftool_source, compressed_path)
-        final_buffer = compressed_path.read_bytes()
-        final_tags = read_metadata(exiftool, compressed_path)
-        final_transparency = pixel_transparency(compressed_path)
-        if original_stat is not None:
-            os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-        return final_buffer, final_tags, final_transparency
-
-    try:
+    with file_on_disk(original_path, original_buffer, f".{input_format}") as exiftool_source:
         original_tags = read_metadata(exiftool, exiftool_source)
+        motion_photo = detect_motion_photo(original_buffer, original_tags)
+        check_motion_photo(motion_photo, allow_motion_photo_loss)
+
+        output_path = Path(output) if output is not None else None
+        if output_path is not None and output_path.is_dir():
+            raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output}.")
+        if output_path is not None and output_path.exists() and not overwrite:
+            raise CommandError(
+                ErrorCode.OUTPUT_EXISTS, f"Output file already exists: {output}. Use --overwrite to replace.",
+            )
+
+        compressed_buffer = call_tinify(prepare_source)
+
+        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None]:
+            """Copy the metadata, read the final bytes, tags and transparency, then give the file the original's dates.
+
+            The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
+            """
+            if metadata == "keep":
+                preserve_metadata(exiftool, exiftool_source, compressed_path)
+            final_buffer = compressed_path.read_bytes()
+            final_tags = read_metadata(exiftool, compressed_path)
+            final_transparency = pixel_transparency(compressed_path)
+            if original_stat is not None:
+                os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            return final_buffer, final_tags, final_transparency
+
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
             final_buffer, final_tags, final_transparency = write_atomically(
@@ -280,9 +303,6 @@ def compress_image(
                 tmp_compressed.write_bytes(compressed_buffer)
                 final_buffer, final_tags, final_transparency = apply_metadata_and_dates(tmp_compressed)
             sys.stdout.buffer.write(final_buffer)
-    finally:
-        if stdin_original is not None:
-            Path(stdin_original.name).unlink(missing_ok=True)
 
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
     input_mtime = iso_mtime(original_stat) if original_stat is not None else None
@@ -318,6 +338,7 @@ def compress_image(
             "size_bytes": output_size,
             "mtime": output_mtime,
         },
+        "motion_photo": motion_photo,
         "tinify": {"compressions_this_month": compression_count},
         "metadata": metadata_diff,
     }
@@ -330,7 +351,10 @@ def main(
     metadata: str,
     overwrite: bool,
     disable_hard_limit: bool,
+    allow_motion_photo_loss: bool,
     verbose: bool,
 ) -> dict[str, Any]:
     """Entry point called from cli.py."""
-    return compress_image(input_file, output, api_key, metadata, overwrite, disable_hard_limit, verbose)
+    return compress_image(
+        input_file, output, api_key, metadata, overwrite, disable_hard_limit, allow_motion_photo_loss, verbose,
+    )

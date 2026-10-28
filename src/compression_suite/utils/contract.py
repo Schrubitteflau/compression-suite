@@ -30,6 +30,7 @@ class ErrorCode(str, Enum):
     TINIFY_UNAVAILABLE = "tinify_unavailable"
     API_KEY_INVALID = "api_key_invalid"
     QUOTA_EXCEEDED = "quota_exceeded"
+    MOTION_PHOTO = "motion_photo"
     UNSUPPORTED_FORMAT = "unsupported_format"
     FILE_TOO_LARGE = "file_too_large"
     INPUT_NOT_FOUND = "input_not_found"
@@ -50,6 +51,7 @@ EXIT_CODES: dict[ErrorCode, int] = {
     ErrorCode.TINIFY_UNAVAILABLE: 10,
     ErrorCode.API_KEY_INVALID: 11,
     ErrorCode.QUOTA_EXCEEDED: 12,
+    ErrorCode.MOTION_PHOTO: 20,
     ErrorCode.UNSUPPORTED_FORMAT: 21,
     ErrorCode.FILE_TOO_LARGE: 22,
     ErrorCode.INPUT_NOT_FOUND: 23,
