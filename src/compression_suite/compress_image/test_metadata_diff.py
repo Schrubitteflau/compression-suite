@@ -106,7 +106,7 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
     }
     assert _important(metadata) == {
         "capture_date": {
-            "key": "capture_date", "before": "2026:09:25 20:57:02", "after": "2026:09:25 20:57:02",
+            "key": "capture_date", "before": "2024:06:15 12:00:00", "after": "2024:06:15 12:00:00",
             "source": "ExifIFD:DateTimeOriginal", "status": "same",
         },
         "gps": {"key": "gps", "before": gps, "after": gps, "source": "GPS:GPSLatitude", "status": "same"},
@@ -140,7 +140,7 @@ def test_s23_photo_has_no_unexpected_loss(tmp_path: Path):
 def test_s23_samsung_trailer_fields_are_expected_losses(tmp_path: Path):
     expected = _expected(_compress(S23_PHOTO, tmp_path / "out.jpg"))
     assert expected["Samsung:TimeStamp"] == {
-        "tag": "Samsung:TimeStamp", "before": "2026:09:25 20:57:02.918+02:00", "reason": SAMSUNG_TRAILER_REASON,
+        "tag": "Samsung:TimeStamp", "before": "2024:06:15 12:00:00.918+02:00", "reason": SAMSUNG_TRAILER_REASON,
     }
     assert expected["Samsung:MCCData"] == {
         "tag": "Samsung:MCCData", "before": "France (208)", "reason": SAMSUNG_TRAILER_REASON,
