@@ -16,7 +16,7 @@ from tinify import ConnectionError as TinifyConnectionError
 
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
-from compression_suite.utils.metadata_diff import ExpectedLoss, diff_metadata, read_metadata
+from compression_suite.utils.metadata_diff import REENCODING_REASON, ExpectedLoss, diff_metadata, read_metadata
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
@@ -27,8 +27,17 @@ SUPPORTED_FORMATS = ("jpeg", "png", "webp", "avif")
 
 THUMBNAIL_REASON = "miniature EXIF retirée exprès : elle montrerait l'image d'origine"
 SAMSUNG_TRAILER_REASON = "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"
-REENCODING_REASON = "réencodage"
 STRIP_REASON = "métadonnées retirées à la demande"
+
+# Tags of exiftool's Samsung::Trailer table, read in the SEFT trailer. Their group, `Samsung`, is also the one
+# of Samsung's EXIF maker notes, which are copied back: `Samsung:*` would hide their loss.
+SAMSUNG_TRAILER_TAGS = (
+    "DepthMapData", "DepthMapData2", "DepthMapName", "DualCameraImage", "DualCameraImageName", "EmbeddedAudioFile",
+    "EmbeddedAudioFileName", "EmbeddedImage", "EmbeddedImage2", "EmbeddedImageName", "EmbeddedVideoFile",
+    "EmbeddedVideoOffsetSize", "EmbeddedVideoType", "MCCData", "MotionPhotoAutoPlayVideo", "OriginalPathHashKey",
+    "RemasterInfo", "SamsungCaptureInfo", "SamsungMotionPhotoVersion", "SingleShotDepthMap", "SurroundShotVideo",
+    "SurroundShotVideoName", "TimeStamp", "VideoEditedTimeZone",
+)
 
 # Losses decided by compression-suite, shown with their reason in the metadata diff. Those with an
 # `excluded_tag` are what EXIFTOOL_EXCLUDE_TAGS keeps from being copied back, so both can't diverge.
@@ -38,7 +47,7 @@ EXPECTED_LOSSES = [
     ExpectedLoss("IFD1:ThumbnailImage", THUMBNAIL_REASON, excluded_tag="ThumbnailImage"),
     ExpectedLoss("IFD1:Compression", "propre à la miniature EXIF, retirée avec elle", excluded_tag="Compression"),
     ExpectedLoss("IFD1:*", THUMBNAIL_REASON),  # size, offset and length of the removed thumbnail
-    ExpectedLoss("Samsung:*", SAMSUNG_TRAILER_REASON),  # read in the SEFT trailer, which Tinify drops
+    *(ExpectedLoss(f"Samsung:{tag}", SAMSUNG_TRAILER_REASON) for tag in SAMSUNG_TRAILER_TAGS),
     # Encoding parameters outside the File group, which Tinify chooses anew
     *(
         ExpectedLoss(tag, REENCODING_REASON)

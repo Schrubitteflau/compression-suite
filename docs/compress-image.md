@@ -55,7 +55,7 @@ This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, orien
 
 ### `--metadata=strip`
 
-The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande".
+The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande", except a change of dimensions, which is never expected.
 
 ### Metadata diff (`--json`)
 
@@ -85,7 +85,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - `color_profile`: description of the ICC profile, `null` if none
 - **`expected_losses`** (`tag`, `before`, `reason`): losses decided by compression-suite, declared in `compress_image/main.py` next to the exiftool exclusions:
   - the EXIF thumbnail (`IFD1:*`) and its `Compression`
-  - the fields of the Samsung end-of-file trailer (`Samsung:*`, read in the `SEFT` zone), which Tinify drops and exiftool can't write
+  - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
 - **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.

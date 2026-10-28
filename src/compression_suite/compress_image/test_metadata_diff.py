@@ -260,3 +260,9 @@ def test_strip_lists_every_loss_as_expected(tmp_path: Path):
     assert "IFD0:Make" in expected
     assert "GPS:GPSLatitude" in expected
     assert _important(metadata)["color_profile"]["status"] == "lost"
+
+
+def test_strip_still_reports_changed_dimensions_as_unexpected(tmp_path: Path):
+    metadata = _compress(_screenshot(tmp_path), tmp_path / "out.png", "--metadata", "strip", resize=0.5)
+    assert {"tag": "PNG:ImageWidth", "kind": "changed", "before": 320, "after": 160} in metadata["unexpected_losses"]
+    assert {loss["reason"] for loss in metadata["expected_losses"]} == {STRIP_REASON}

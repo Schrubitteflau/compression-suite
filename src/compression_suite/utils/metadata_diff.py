@@ -4,7 +4,8 @@ Tags are keyed `Group:Name` (exiftool `-j -G1 -a`). Each tag present before is e
 (declared by the command, with its reason) or an unexpected loss (`removed` or `changed`). Tags that appear
 after are listed apart. The important fields (capture date, GPS, camera...) always come first, even when intact.
 
-The module is generic: a command passes its own expected losses, and the video commands can add important fields.
+The module is generic: a command passes its own expected losses. The video commands will add their important
+fields (rotation, creation date) to IMPORTANT_FIELDS.
 """
 
 import json
@@ -17,9 +18,16 @@ from typing import Any
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
 
-# The `File` group describes the encoding, which compression changes on purpose, except for the dimensions.
-FILE_GROUP_REASON = "réencodage"
+REENCODING_REASON = "réencodage"
+
+# The `File` group describes the encoding, which re-encoding changes on purpose. Its dimensions must not change,
+# and its JPEG comment is real metadata.
 FILE_GROUP_COMPARED_TAGS = ("File:ImageWidth", "File:ImageHeight", "File:Comment")
+
+# Groups carrying the image dimensions, by format. A change of dimensions is never expected, whatever the command
+# declares: the image must keep its size.
+DIMENSION_GROUPS = ("File", "PNG", "RIFF")
+DIMENSION_TAGS = tuple(f"{group}:{name}" for group in DIMENSION_GROUPS for name in ("ImageWidth", "ImageHeight"))
 
 MTIME_SOURCE = "file_mtime"
 
@@ -89,7 +97,7 @@ IMPORTANT_FIELDS = (
         "dimensions",
         tuple(
             {"width": f"{group}:ImageWidth", "height": f"{group}:ImageHeight"}
-            for group in ("File", "PNG", "RIFF")
+            for group in DIMENSION_GROUPS
         ),
     ),
     ImportantField("orientation", ("IFD0:Orientation", "XMP-tiff:Orientation")),
@@ -100,15 +108,16 @@ IMPORTANT_FIELDS = (
 def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     """Read every tag of a file (`Group:Name` -> value), without the ignored groups.
 
-    A file exiftool can't read gives no tags rather than an error: the diff then has nothing to compare.
+    exiftool still describes a file whose format it doesn't know (with an `ExifTool:Error`, in an ignored group):
+    no output at all means exiftool itself failed, which is an error rather than a file without tags.
     """
     result = subprocess.run(
         [str(exiftool), "-j", "-G1", "-a", str(path)], capture_output=True, text=True, timeout=30,
     )
     try:
         [tags] = json.loads(result.stdout)
-    except ValueError:
-        return {}
+    except ValueError as e:
+        raise RuntimeError(f"exiftool could not read {path}: {result.stderr.strip()}") from e
     return {
         tag: value
         for tag, value in tags.items()
@@ -136,6 +145,7 @@ def _field_value(field: ImportantField, tags: dict[str, Any]) -> tuple[Any, str 
 
 
 def _status(before: Any, after: Any) -> str:
+    """`absent` on both sides, `same`, `lost` after, or `changed` (including a value that appears)."""
     if before is None and after is None:
         return "absent"
     if before == after:
@@ -168,11 +178,13 @@ def _important_fields(
 
 def _expected_reason(tag: str, expected_losses: list[ExpectedLoss]) -> str | None:
     """The reason of the first expected loss matching the tag, the `File` group's, or None if the loss is unexpected."""
+    if tag in DIMENSION_TAGS:
+        return None
     for loss in expected_losses:
         if fnmatchcase(tag, loss.pattern):
             return loss.reason
     if tag.startswith("File:") and tag not in FILE_GROUP_COMPARED_TAGS:
-        return FILE_GROUP_REASON
+        return REENCODING_REASON
     return None
 
 
