@@ -39,10 +39,6 @@ from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
 
-# Whether a viewer displays the output as the original: the same picture (orientation), the same colours. None when
-# not checked.
-PixelChecks = tuple[bool | None, bool | None]
-
 HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 
 SUPPORTED_FORMATS = ("jpeg", "png", "webp", "avif")
@@ -400,6 +396,7 @@ def compress_image(
         orientation_args = applied_orientation_tags(original_tags, compressed_buffer) if pixels_turned else []
         if pixels_turned:
             expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
+
         # Only a profile can have converted the colours; with --metadata strip, no profile is copied back
         colors_args = []
         if (
@@ -410,7 +407,9 @@ def compress_image(
             colors_args = EXIFTOOL_COLORS_CONVERTED_EXCLUDE_TAGS
             expected_losses = COLORS_CONVERTED_LOSSES + expected_losses
 
-        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None, PixelChecks]:
+        def apply_metadata_and_dates(
+            compressed_path: Path,
+        ) -> tuple[bytes, dict[str, Any], bool | None, bool | None, bool | None]:
             """Copy the metadata, read the final bytes, tags, transparency and whether it is displayed as the original
             (picture and colours), then give the file the original's dates.
 
@@ -426,14 +425,14 @@ def compress_image(
             final_tags = read_metadata(exiftool, compressed_path)
             final_transparency = pixel_transparency(compressed_path)
             same_picture = same_displayed_picture(exiftool_source, compressed_path) if oriented else None
-            colors = same_colors(exiftool_source, compressed_path) if same_picture is not False else None
+            colors_kept = same_colors(exiftool_source, compressed_path) if same_picture is not False else None
             if original_stat is not None:
                 os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-            return final_buffer, final_tags, final_transparency, (same_picture, colors)
+            return final_buffer, final_tags, final_transparency, same_picture, colors_kept
 
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
-            final_buffer, final_tags, final_transparency, (same_picture, colors) = write_atomically(
+            final_buffer, final_tags, final_transparency, same_picture, colors_kept = write_atomically(
                 output_path,
                 compressed_buffer,
                 apply_metadata_and_dates,
@@ -442,7 +441,7 @@ def compress_image(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                final_buffer, final_tags, final_transparency, (same_picture, colors) = apply_metadata_and_dates(
+                final_buffer, final_tags, final_transparency, same_picture, colors_kept = apply_metadata_and_dates(
                     tmp_compressed
                 )
             sys.stdout.buffer.write(final_buffer)
@@ -456,7 +455,7 @@ def compress_image(
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
         same_picture=same_picture,
-        same_colors=colors,
+        same_colors=colors_kept,
     )
 
     output_size = len(final_buffer)

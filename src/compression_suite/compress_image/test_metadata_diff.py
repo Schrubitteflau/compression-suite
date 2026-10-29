@@ -391,15 +391,30 @@ def test_strip_of_a_photo_tinify_did_not_convert_changes_its_colours(tmp_path: P
     ]
 
 
-def test_srgb_profile_which_converts_nothing_is_copied_back(tmp_path: Path):
-    """Pixels converted from sRGB to sRGB can't be told from the original's: its profile is kept, as any other tag."""
+def test_srgb_profile_which_converts_nothing_changes_no_colour(tmp_path: Path):
+    """Pixels converted from sRGB to sRGB can't be told from the original's: kept or dropped, its profile changes
+    nothing."""
     src = tmp_path / "photo.jpg"
     srgb_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     with Image.open(S23_PHOTO) as photo:
         photo.resize((400, 300)).save(src, format="JPEG", quality=95, icc_profile=srgb_profile)
     metadata = _compress(src, tmp_path / "out.jpg")
     assert metadata["unexpected_losses"] == []
-    assert _important(metadata)["color_profile"]["status"] == "same"
+
+
+def _dull_p3_photo(tmp_path: Path) -> Path:
+    """The S23 photo with dull colours, which its P3 profile barely changes, with that profile."""
+    src = tmp_path / "dull.jpg"
+    with Image.open(S23_PHOTO) as photo:
+        dull = Image.blend(photo.convert("L").convert("RGB"), photo.convert("RGB"), 0.3).resize((400, 300))
+        dull.save(src, format="JPEG", quality=95, icc_profile=photo.info["icc_profile"])
+    return src
+
+
+def test_dull_p3_photo_converted_to_srgb_gets_no_p3_profile(tmp_path: Path):
+    metadata = _compress(_dull_p3_photo(tmp_path), tmp_path / "out.jpg")
+    assert "ICC_Profile:ProfileDescription" not in metadata["after"]
+    assert _expected(metadata)["ICC_Profile:ProfileDescription"]["reason"] == COLORS_CONVERTED_REASON
 
 
 def _p3_avif(tmp_path: Path) -> Path:

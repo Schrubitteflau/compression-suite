@@ -8,6 +8,7 @@ colours. Colours are compared on small RGB copies of the pixels as displayed (or
 
 import io
 from pathlib import Path
+from typing import cast
 
 from PIL import Image, ImageChops, ImageCms, ImageOps, ImageStat
 
@@ -21,7 +22,8 @@ SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
 COMPARED_SIZE = (32, 32)
 SAME_COLORS_MAX_DIFFERENCE = 1.5
 
-# Modes an ICC profile can describe as they are; any other (palette, alpha) is flattened on white to RGB first.
+# Modes an ICC profile can describe as they are; any other (palette, alpha, 16-bit grey) is flattened on white first,
+# to RGB or to grey (L) as its base mode, which a grey profile still describes.
 PROFILED_MODES = ("RGB", "L", "CMYK")
 
 
@@ -51,12 +53,11 @@ def _srgb_copy(source: Path | bytes, use_profile: bool) -> tuple[Image.Image, fl
             pixels = ImageOps.exif_transpose(image)
             if pixels.mode not in PROFILED_MODES:
                 pixels = Image.alpha_composite(Image.new("RGBA", pixels.size, "white"), pixels.convert("RGBA"))
-                pixels = pixels.convert("RGB")
+                pixels = pixels.convert(Image.getmodebase(image.mode))
             if icc_profile:
                 profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
-                converted = ImageCms.profileToProfile(pixels, profile, SRGB, outputMode="RGB")
-                assert converted is not None  # only None with inPlace=True
-                pixels = converted
+                # Only None with inPlace=True
+                pixels = cast(Image.Image, ImageCms.profileToProfile(pixels, profile, SRGB, outputMode="RGB"))
             return pixels.convert("RGB").resize(COMPARED_SIZE), pixels.width / pixels.height
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError, ImageCms.PyCMSError):
         return None
@@ -73,9 +74,11 @@ def _difference(first: tuple[Image.Image, float], second: tuple[Image.Image, flo
 def colors_converted(original: Path, compressed: bytes) -> bool:
     """Whether the compressed pixels, read with their own profile if any, are the original's converted to sRGB.
 
-    They must show the original's colours converted, and the original's pixels read as sRGB must not: a profile close
-    to sRGB, which changes nothing, can't be told apart. False then, or when either can't be decoded: the original's
-    profile is copied back, as any other tag, and colours displayed otherwise are caught by same_colors.
+    They must show the original's colours converted, and be at least as close to them as to the original's pixels read
+    as sRGB. Tinify converted every P3 image of the real calls: a photo of dull colours, whose P3 and sRGB readings are
+    close, is converted too. A profile that converts nothing (sRGB) may then be dropped, which changes no colour. False
+    when they can't be compared, or either can't be decoded: the original's profile is copied back, as any other tag,
+    and colours displayed otherwise are caught by same_colors.
     """
     converted, raw = _srgb_copy(original, use_profile=True), _srgb_copy(original, use_profile=False)
     compressed_copy = _srgb_copy(compressed, use_profile=True)
@@ -84,7 +87,7 @@ def colors_converted(original: Path, compressed: bytes) -> bool:
     to_converted, to_raw = _difference(compressed_copy, converted), _difference(compressed_copy, raw)
     if to_converted is None or to_raw is None:
         return False
-    return to_converted <= SAME_COLORS_MAX_DIFFERENCE < to_raw
+    return to_converted <= SAME_COLORS_MAX_DIFFERENCE and to_converted <= to_raw
 
 
 def same_colors(original: Path, output: Path) -> bool | None:
