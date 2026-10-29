@@ -33,7 +33,7 @@ def compress_image(
     allow_motion_photo_loss: bool = typer.Option(
         False,
         "--allow-motion-photo-loss",
-        help="Compress a motion photo whose video can't be kept anyway, losing its video",
+        help="Compress a motion photo whose video can't be kept, losing its video",
     ),
     json_mode: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),

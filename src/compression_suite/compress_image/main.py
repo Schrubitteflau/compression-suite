@@ -115,7 +115,7 @@ MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
 # Losses of a motion photo compressed with --allow-motion-photo-loss, losing its video. The XMP declaring the video is
 # not copied back: the compressed file would still claim a video it no longer has. Its toolkit, copied back with the
-# rest, is dropped if nothing else remains. The SEFT trailer, the Samsung video's or not, is not appended back.
+# rest, is dropped if nothing else remains. No SEFT trailer is appended back, so its fields are lost too.
 MOTION_PHOTO_LOSSES = [
     ExpectedLoss("XMP-GCamera:MotionPhoto*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MotionPhoto*"),
     ExpectedLoss("XMP-GCamera:MicroVideo*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MicroVideo*"),
@@ -369,7 +369,7 @@ def compress_image(
         metadata: "keep" to preserve metadata via exiftool, "strip" to discard.
         overwrite: Allow overwriting existing output file.
         disable_hard_limit: Bypass the 15MB hard limit.
-        allow_motion_photo_loss: Compress a motion photo whose video can't be kept anyway, losing its video.
+        allow_motion_photo_loss: Compress a motion photo whose video can't be kept, losing its video.
         verbose: Enable verbose reporting.
 
     Returns:
@@ -426,10 +426,11 @@ def compress_image(
 
         # Appended before the exiftool copy, which keeps the zone byte for byte
         appended_buffer = append_zone(compressed_buffer, original_buffer, zone) if zone is not None else None
-        video_kept = motion_photo["detected"] and appended_buffer is not None
+        # None without a motion photo: there is no video to keep
+        video_kept = (appended_buffer is not None) if motion_photo["detected"] else None
         motion_photo_exclusions = []
         expected_losses = EXPECTED_LOSSES
-        if motion_photo["detected"] and not video_kept:
+        if video_kept is False:
             motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS
             # Past the check, without a zone, the loss was allowed. A zone that couldn't be appended is unexpected.
             if zone is None:
@@ -530,7 +531,7 @@ def compress_image(
             "size_bytes": output_size,
             "mtime": output_mtime,
         },
-        "motion_photo": {**motion_photo, "video_kept": video_kept if motion_photo["detected"] else None},
+        "motion_photo": {**motion_photo, "video_kept": video_kept},
         "tinify": {"compressions_this_month": compression_count},
         "metadata": metadata_diff,
     }

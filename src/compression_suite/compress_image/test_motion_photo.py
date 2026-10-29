@@ -146,6 +146,7 @@ def _metadata(result: Result) -> dict:
 
 
 def _expected_reasons(metadata: dict) -> dict[str, str]:
+    """The reason of each expected loss, by tag."""
     return {loss["tag"]: loss["reason"] for loss in metadata["expected_losses"]}
 
 
@@ -272,6 +273,7 @@ def test_samsung_fields_of_the_zone_are_kept(tmp_path: Path):
 
 
 def _google_video(path: Path) -> bytes:
+    """The video the Google `Container:Directory` points to, extracted by exiftool."""
     exiftool = resolve_tool("exiftool")
     return subprocess.run([str(exiftool), "-b", "-Google:MotionPhotoVideo", str(path)], capture_output=True).stdout
 
@@ -296,7 +298,9 @@ def test_kept_motion_photo_is_still_one_and_compresses_again(tmp_path: Path):
     _invoke(S23_MOTION_PHOTO, out, reencode=True)
     inspected = runner.invoke(app, ["inspect", str(out), "--json"])
     assert inspected.exit_code == 0, inspected.output
-    assert json.loads(inspected.stdout)["result"]["motion_photo"] == {"detected": True, "signals": S23_SIGNALS}
+    inspection = json.loads(inspected.stdout)["result"]
+    assert inspection["motion_photo"] == {"detected": True, "signals": S23_SIGNALS}
+    assert inspection["corrupt"] == {"detected": False, "reason": None}
 
     again, _ = _invoke(out, tmp_path / "again.jpg", reencode=True)
     assert _motion_photo_result(again) == {"detected": True, "signals": S23_SIGNALS, "video_kept": True}

@@ -25,7 +25,7 @@ cat photo.jpg | compression_suite compress-image --metadata=strip > compressed.j
 # Override the 15MB safety limit
 compression_suite compress-image huge.png --output out.png --disable-hard-limit
 
-# Compress a motion photo whose video can't be kept anyway, losing its video
+# Compress a motion photo whose video can't be kept, losing its video
 compression_suite compress-image motion.jpg --output out.jpg --allow-motion-photo-loss
 
 # Machine-readable output (one JSON document on stdout, --output is required)
@@ -47,7 +47,7 @@ The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.confi
 | `--metadata` | `keep` | `keep` (preserve via exiftool) or `strip` |
 | `--overwrite` | `false` | Overwrite output file if it exists |
 | `--disable-hard-limit` | `false` | Bypass the 15MB input size limit |
-| `--allow-motion-photo-loss` | `false` | Compress a motion photo whose video can't be kept anyway, losing its video |
+| `--allow-motion-photo-loss` | `false` | Compress a motion photo whose video can't be kept, losing its video |
 | `--json` | `false` | Write a single JSON document on stdout (requires `--output`) |
 | `--verbose`, `-v` | `false` | Enable verbose logging |
 
@@ -144,7 +144,7 @@ A motion photo carries a short video after its image. Tinify only returns the im
 
 When the zone of a Samsung motion photo can't be appended after the compressed image (something follows it), the video is lost without having been allowed: the XMP declaring it is not copied back either, and every loss is unexpected.
 
-`result.motion_photo.video_kept` tells whether the output kept the video: `true` when the zone was appended, `false` when the video was lost, `null` without a motion photo.
+`result.motion_photo.video_kept` tells whether the output kept the video: `true` when the zone was appended, `false` when the video was lost (allowed, or not), `null` without a motion photo.
 
 The detector (`utils/motion_photo.py`, shared with [`inspect`](inspect.md)) looks for these signals, in this order:
 
@@ -196,7 +196,7 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
 }
 ```
 
-`metadata` is the metadata diff described above. `motion_photo` is the detector's result (`detected`, `signals`), plus `video_kept`: `true` when the video was kept, `false` when it was lost with `--allow-motion-photo-loss`, `null` without a motion photo (see [Motion photos](#motion-photos)). `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
+`metadata` is the metadata diff described above. `motion_photo` is the detector's result (`detected`, `signals`), plus `video_kept`: `true` when the video was kept, `false` when it was lost (allowed with `--allow-motion-photo-loss`, or a zone that couldn't be appended), `null` without a motion photo (see [Motion photos](#motion-photos)). `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
 
 ```json
 {
