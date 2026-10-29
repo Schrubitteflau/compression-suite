@@ -371,11 +371,14 @@ def test_xmp_other_than_the_motion_photo_is_kept(tmp_path: Path):
     xmp = GCAMERA_XMP.format(
         attributes='GCamera:MotionPhoto="1" xmlns:dc="http://purl.org/dc/elements/1.1/"',
         directory='<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Neutral</rdf:li></rdf:Alt></dc:title>',
-    )
+    ).replace('xmlns:x="adobe:ns:meta/"', 'xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1"')
     src = _write(tmp_path, "photo.jpg", _jpeg(xmp))
     result, _ = _invoke(src, tmp_path / "out.jpg", "--allow-motion-photo-loss", reencode=True)
     metadata = json.loads(result.stdout)["result"]["metadata"]
     assert metadata["after"]["XMP-dc:Title"] == "Neutral"
+    # The toolkit is copied back with the rest: it is no loss, not even an expected one
+    assert metadata["after"]["XMP-x:XMPToolkit"] == "Adobe XMP Core 5.1"
+    assert "XMP-x:XMPToolkit" not in {loss["tag"] for loss in metadata["expected_losses"]}
     assert "XMP-GCamera:MotionPhoto" not in metadata["after"]
     assert metadata["unexpected_losses"] == []
 

@@ -96,8 +96,8 @@ EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [
 ]
 
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
-# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost; without XMPToolkit,
-# exiftool would name itself as the toolkit of the XMP it rewrites).
+# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost). Without XMPToolkit,
+# exiftool would name itself as the toolkit of the XMP it rewrites.
 EXIFTOOL_EXTRA_TAGS = [
     "-InteropIndex",
     "-InteropVersion",
