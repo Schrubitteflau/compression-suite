@@ -18,8 +18,8 @@ def _permissions(key_report: dict[str, Any]) -> str:
     if key_report["permissions_ok"] is None:
         return "- (no configuration file)"
     if key_report["permissions_ok"]:
-        return "ok (readable by you alone)"
-    return f"readable by other users. Run: chmod 600 {key_report['config_path']}"
+        return "ok (600: open to you alone)"
+    return f"open to other users. Run: chmod 600 {key_report['config_path']}"
 
 
 def print_report(report: dict[str, Any]) -> None:

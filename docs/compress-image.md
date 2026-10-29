@@ -35,7 +35,7 @@ compression_suite compress-image photo.jpg --output compressed.jpg --json
 compression_suite compress-image photo.jpg --output compressed.jpg --api-key=OTHER_KEY
 ```
 
-The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when set to an absolute path). An empty `--api-key` (an unset variable in `--api-key="$KEY"`) is a missing key: the file is not used instead. No other environment variable is read, and the key never appears in any output. A configuration file readable by the group or the others gives a warning on stderr.
+The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when set to an absolute path). An empty `--api-key` (an unset variable in `--api-key="$KEY"`) is a missing key: the file is not used instead. No other environment variable is read, and the key never appears in any output. A configuration file on which the group or the others have any right (anything but 600 or stricter) gives a warning on stderr.
 
 ## Options
 

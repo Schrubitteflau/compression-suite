@@ -187,8 +187,8 @@ def test_present_key_is_reported_but_never_shown(config_home: Path):
     }
 
 
-@pytest.mark.parametrize("mode", [0o640, 0o604])
-def test_key_readable_by_others_has_bad_permissions(config_home: Path, mode: int):
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o620, 0o602, 0o610, 0o601])
+def test_key_open_to_others_has_bad_permissions(config_home: Path, mode: int):
     path = _write_config(config_home, f'tinify_api_key = "{KEY}"\n', mode)
     result = _invoke("--json")
     assert result.exit_code == 0, result.output

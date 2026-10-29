@@ -32,8 +32,11 @@ def config_path() -> Path:
 
 
 def is_private(path: Path) -> bool:
-    """Whether neither the group nor the others can read the file (which must exist)."""
-    return not path.stat().st_mode & (stat.S_IRGRP | stat.S_IROTH)
+    """Whether the group and the others have no right at all on the file (which must exist): 600 or stricter.
+
+    Write matters as much as read: whoever can write the file can replace the key.
+    """
+    return not path.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO)
 
 
 def _is_blank(key: object) -> bool:
@@ -82,8 +85,8 @@ def read_api_key(path: Path) -> str:
     content = _read_config(path)
     if not is_private(path):
         stderr_console.print(
-            f"[bold yellow]Warning:[/bold yellow] {path} is readable by other users, "
-            f"who can see your Tinify key. Run: chmod 600 {path}",
+            f"[bold yellow]Warning:[/bold yellow] {path} is open to other users, "
+            f"who can read or replace your Tinify key. Run: chmod 600 {path}",
             highlight=False,
             soft_wrap=True,
         )

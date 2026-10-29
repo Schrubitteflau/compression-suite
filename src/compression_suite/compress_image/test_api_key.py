@@ -155,8 +155,8 @@ def test_unparsable_file_is_reported_without_its_content(config_home: Path, tmp_
     assert not fake.from_file.called
 
 
-@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644])
-def test_file_readable_by_others_gives_a_warning(config_home: Path, tmp_path: Path, mode: int):
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o620, 0o602, 0o610, 0o601])
+def test_file_open_to_others_gives_a_warning(config_home: Path, tmp_path: Path, mode: int):
     path = _write_config(config_home, f'tinify_api_key = "{FILE_KEY}"\n', mode)
     result, _ = _compress(tmp_path)
     assert result.exit_code == 0, result.output
@@ -165,8 +165,9 @@ def test_file_readable_by_others_gives_a_warning(config_home: Path, tmp_path: Pa
     assert "chmod 600" in result.stderr
 
 
-def test_private_file_gives_no_warning(config_home: Path, tmp_path: Path):
-    _write_config(config_home, f'tinify_api_key = "{FILE_KEY}"\n')
+@pytest.mark.parametrize("mode", [0o600, 0o400, 0o700])
+def test_private_file_gives_no_warning(config_home: Path, tmp_path: Path, mode: int):
+    _write_config(config_home, f'tinify_api_key = "{FILE_KEY}"\n', mode)
     result, _ = _compress(tmp_path)
     assert result.exit_code == 0, result.output
     assert "Warning" not in result.stderr

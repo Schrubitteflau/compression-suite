@@ -61,7 +61,7 @@ You should see the available commands listed. `uv run compression_suite doctor` 
 
 ### Tinify API key
 
-`compress-image` uses `--api-key` if given, else `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when that variable is set to an absolute path). An empty `--api-key` is a missing key, not a fallback on the file. No other environment variable is read, and the key never appears in any output. Without a key, the command fails with `api_key_missing` (exit code 13), naming the expected file. If the file is readable by the group or the others, a warning is printed on stderr: run `chmod 600` on it.
+`compress-image` uses `--api-key` if given, else `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when that variable is set to an absolute path). An empty `--api-key` is a missing key, not a fallback on the file. No other environment variable is read, and the key never appears in any output. Without a key, the command fails with `api_key_missing` (exit code 13), naming the expected file. If the group or the others have any right on the file (read, write or execute: anything but 600 or stricter), a warning is printed on stderr: run `chmod 600` on it.
 
 # Core concepts
 
