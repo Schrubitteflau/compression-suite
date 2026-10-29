@@ -11,6 +11,8 @@ from pathlib import Path
 import pillow_heif
 from PIL import Image
 
+from compression_suite.utils.contract import CommandError, ErrorCode
+
 PILLOW_FORMATS = ("jpeg", "png", "webp", "gif", "avif")
 HEIF_FORMATS = ("heic", "heif")
 
@@ -22,7 +24,7 @@ class CorruptImageError(Exception):
     """A file whose format is recognised but that its decoder can't read to the end; the message is the decoder's."""
 
 
-def _open(source: Path | bytes) -> Path | io.BytesIO:
+def _decoder_input(source: Path | bytes) -> Path | io.BytesIO:
     """What the decoders open: the path of a file, or the bytes read from stdin."""
     return source if isinstance(source, Path) else io.BytesIO(source)
 
@@ -35,8 +37,8 @@ def decode_image(source: Path | bytes, detected_format: str) -> Image.Image:
     """
     try:
         if detected_format in HEIF_FORMATS:
-            return pillow_heif.open_heif(_open(source)).to_pillow()
-        image = Image.open(_open(source))
+            return pillow_heif.open_heif(_decoder_input(source)).to_pillow()
+        image = Image.open(_decoder_input(source))
         try:
             image.load()
         except BaseException:
@@ -59,5 +61,21 @@ def corruption_reason(source: Path | bytes, detected_format: str) -> str | None:
     except CorruptImageError as e:
         return str(e)
     except Image.DecompressionBombError:
-        return None
+        pass
     return None
+
+
+def corrupt_input_error(detected_format: str, reason: str) -> CommandError:
+    """The `input_corrupt` error of a file whose format is recognised but that its decoder can't read to the end."""
+    return CommandError(
+        ErrorCode.INPUT_CORRUPT,
+        f"Damaged {detected_format} file, it can't be decoded: {reason}",
+        {"detected_format": detected_format},
+    )
+
+
+def check_decodable(source: Path | bytes, detected_format: str) -> None:
+    """Reject a damaged input (`input_corrupt`) before any work on it."""
+    reason = corruption_reason(source, detected_format)
+    if reason is not None:
+        raise corrupt_input_error(detected_format, reason)

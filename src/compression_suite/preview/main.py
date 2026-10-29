@@ -9,17 +9,9 @@ import io
 from pathlib import Path
 from typing import Any
 
-from compression_suite.compress_image.main import (
-    check_format,
-    check_output,
-    corrupt_input_error,
-    validate_input_file,
-    write_atomically,
-)
-from compression_suite.utils.decoding import CorruptImageError, decode_image
+from compression_suite.compress_image.main import check_format, check_output, validate_input_file, write_atomically
+from compression_suite.utils.decoding import HEIF_FORMATS, CorruptImageError, corrupt_input_error, decode_image
 from compression_suite.utils.formats import detect_file_format
-
-PREVIEWABLE_FORMATS = ("heic", "heif")
 
 JPEG_QUALITY = 90
 
@@ -47,7 +39,7 @@ def write_preview(input_file: str, output: str, overwrite: bool) -> dict[str, An
     """Write the JPEG preview of a HEIC or HEIF and return the `result` object of the JSON contract."""
     input_path = validate_input_file(input_file)
     detected_format = detect_file_format(input_path)
-    check_format(detected_format, PREVIEWABLE_FORMATS)
+    check_format(detected_format, HEIF_FORMATS)
     output_path = Path(output)
     check_output(output_path, overwrite)
     jpeg, width, height = heic_to_jpeg(input_path, detected_format)
