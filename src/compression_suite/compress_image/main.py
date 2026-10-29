@@ -15,6 +15,7 @@ from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
 
+from compression_suite.utils.config import resolve_api_key
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
 from compression_suite.utils.metadata_diff import (
@@ -235,7 +236,7 @@ def iso_mtime(stat: os.stat_result) -> str:
 def compress_image(
     input_file: str | None,
     output: str | None,
-    api_key: str,
+    api_key: str | None,
     metadata: str,
     overwrite: bool,
     disable_hard_limit: bool,
@@ -249,6 +250,7 @@ def compress_image(
     Args:
         input_file: Path to input file, or None for stdin.
         output: Path to output file, or None for stdout.
+        api_key: Tinify key, or None to read it from the configuration file.
         metadata: "keep" to preserve metadata via exiftool, "strip" to discard.
         overwrite: Allow overwriting existing output file.
         disable_hard_limit: Bypass the 15MB hard limit.
@@ -263,8 +265,6 @@ def compress_image(
     exiftool = resolve_tool("exiftool")
     if verbose:
         console.print(f"[dim]exiftool: {exiftool}[/dim]")
-
-    tinify.key = api_key
 
     # Validate input and prepare API call (deferred to avoid burning a credit before checks)
     original_path = None
@@ -301,6 +301,8 @@ def compress_image(
             raise CommandError(
                 ErrorCode.OUTPUT_EXISTS, f"Output file already exists: {output}. Use --overwrite to replace.",
             )
+
+        tinify.key = resolve_api_key(api_key)
 
         compressed_buffer = call_tinify(prepare_source)
 
@@ -373,7 +375,7 @@ def compress_image(
 def main(
     input_file: str | None,
     output: str | None,
-    api_key: str,
+    api_key: str | None,
     metadata: str,
     overwrite: bool,
     disable_hard_limit: bool,

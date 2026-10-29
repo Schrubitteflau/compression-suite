@@ -30,6 +30,7 @@ class ErrorCode(str, Enum):
     TINIFY_UNAVAILABLE = "tinify_unavailable"
     API_KEY_INVALID = "api_key_invalid"
     QUOTA_EXCEEDED = "quota_exceeded"
+    API_KEY_MISSING = "api_key_missing"
     MOTION_PHOTO = "motion_photo"
     UNSUPPORTED_FORMAT = "unsupported_format"
     FILE_TOO_LARGE = "file_too_large"
@@ -52,6 +53,7 @@ EXIT_CODES: dict[ErrorCode, int] = {
     ErrorCode.TINIFY_UNAVAILABLE: 10,
     ErrorCode.API_KEY_INVALID: 11,
     ErrorCode.QUOTA_EXCEEDED: 12,
+    ErrorCode.API_KEY_MISSING: 13,
     ErrorCode.MOTION_PHOTO: 20,
     ErrorCode.UNSUPPORTED_FORMAT: 21,
     ErrorCode.FILE_TOO_LARGE: 22,
@@ -118,7 +120,7 @@ def run_command(command: str, json_mode: bool, body: Callable[[], dict[str, Any]
     elif error.code is ErrorCode.INTERRUPTED:
         stderr_console.print(f"\n[bold yellow]{error.message}[/bold yellow]")
     else:
-        stderr_console.print(f"[bold red]Error:[/bold red] {error.message}", highlight=False)
+        stderr_console.print(f"[bold red]Error:[/bold red] {error.message}", highlight=False, soft_wrap=True)
     raise typer.Exit(code=error.code.exit_code)
 
 

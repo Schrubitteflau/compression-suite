@@ -156,6 +156,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "tinify" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
 ]
 
@@ -185,6 +186,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.0" },
     { name = "ruff", marker = "extra == 'test'" },
     { name = "tinify", specifier = ">=1.6.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "ty", marker = "extra == 'test'" },
     { name = "typer", specifier = ">=0.9.0" },
 ]

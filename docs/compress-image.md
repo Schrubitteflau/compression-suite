@@ -8,29 +8,34 @@ Supports JPEG, PNG, WebP, and AVIF — any format accepted by Tinify. The API ac
 
 - **Pinned exiftool**: installed in the project by `just install-tools`, at the version of `pinned-tools.json`. The exiftool found in `PATH` (e.g. `/usr/bin/exiftool`) is never used
 - **Perl**: needed to run exiftool
-- **Tinify API key**: get one at https://tinypng.com/developers (500 free compressions/month)
+- **Tinify API key**: get one at https://tinypng.com/developers (500 free compressions/month), then write it in the configuration file (see [the README](../README.md#tinify-api-key)) or pass it with `--api-key`
 
 ## Usage
 
 ```bash
 # File to file, preserving metadata (default)
-compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOUR_KEY
+compression_suite compress-image photo.jpg --output compressed.jpg
 
 # Strip metadata
-compression_suite compress-image photo.jpg --output stripped.jpg --api-key=YOUR_KEY --metadata=strip
+compression_suite compress-image photo.jpg --output stripped.jpg --metadata=strip
 
 # stdin to stdout (for piping)
-cat photo.jpg | compression_suite compress-image --api-key=YOUR_KEY --metadata=strip > compressed.jpg
+cat photo.jpg | compression_suite compress-image --metadata=strip > compressed.jpg
 
 # Override the 15MB safety limit
-compression_suite compress-image huge.png --output out.png --api-key=YOUR_KEY --disable-hard-limit
+compression_suite compress-image huge.png --output out.png --disable-hard-limit
 
 # Compress a motion photo anyway, losing its video
-compression_suite compress-image motion.jpg --output out.jpg --api-key=YOUR_KEY --allow-motion-photo-loss
+compression_suite compress-image motion.jpg --output out.jpg --allow-motion-photo-loss
 
 # Machine-readable output (one JSON document on stdout, --output is required)
-compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOUR_KEY --json
+compression_suite compress-image photo.jpg --output compressed.jpg --json
+
+# Another key than the configuration file's
+compression_suite compress-image photo.jpg --output compressed.jpg --api-key=OTHER_KEY
 ```
+
+The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when set). No environment variable is read, and the key never appears in any output. A configuration file readable by the group or the others gives a warning on stderr.
 
 ## Options
 
@@ -38,7 +43,7 @@ compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOU
 |---|---|---|
 | `INPUT_FILE` | stdin | Path to input image file (omit to read from stdin) |
 | `--output`, `-o` | stdout | Path to output file (omit to write to stdout) |
-| `--api-key` | *(required)* | Tinify API key |
+| `--api-key` | configuration file | Tinify API key, wins over `tinify_api_key` in the configuration file |
 | `--metadata` | `keep` | `keep` (preserve via exiftool) or `strip` |
 | `--overwrite` | `false` | Overwrite output file if it exists |
 | `--disable-hard-limit` | `false` | Bypass the 15MB input size limit |
@@ -121,12 +126,12 @@ The detector (`utils/motion_photo.py`, shared with [`inspect`](inspect.md)) look
 
 - Without `--json`, **stdout is reserved for binary image data** (when `--output` is omitted) — all reporting goes to stderr
 - Compression stats (size before/after, ratio, API compression count) are always printed to stderr
-- Compatible with Unix pipes: `cat input.jpg | compress-image --api-key=KEY | other-tool`
+- Compatible with Unix pipes: `cat input.jpg | compress-image | other-tool`
 - The format is detected from the file content, never from its extension
 - The output is written atomically: a temporary file in the destination folder, then a rename
 - The output is written even when it is larger than the original
 - When reading from a file, the output gets the original's atime and mtime, applied after exiftool rewrites it (with or without `--json`, whatever `--metadata`). From stdin, there is no date to carry over
-- Every check that can fail without Tinify (pinned exiftool, input, format, size, motion photo, existing output) runs before the API call, in this order, so no credit is wasted
+- Every check that can fail without Tinify (pinned exiftool, input, format, size, motion photo, existing output, key) runs before the API call, in this order, so no credit is wasted
 
 ## JSON output (`--json`)
 
@@ -173,6 +178,7 @@ Exit codes are the same with or without `--json`.
 | `tinify_unavailable` | 10 | Tinify server error or network failure | |
 | `api_key_invalid` | 11 | Key rejected, Tinify client error | |
 | `quota_exceeded` | 12 | Monthly API quota exceeded | |
+| `api_key_missing` | 13 | No `--api-key`, and no usable `tinify_api_key` in the configuration file (absent, unreadable, invalid TOML, empty) | `config_path` |
 | `motion_photo` | 20 | Motion photo detected without `--allow-motion-photo-loss` | `signals` |
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |
@@ -191,5 +197,5 @@ Exit codes are the same with or without `--json`.
 ```bash
 # First reduce to 5MB, then compress via API
 cat large.jpg | compression_suite reduce-jpeg-size --max-size=4999 \
-  | compression_suite compress-image --api-key=YOUR_KEY --metadata=strip > final.jpg
+  | compression_suite compress-image --metadata=strip > final.jpg
 ```

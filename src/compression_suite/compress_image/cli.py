@@ -18,7 +18,9 @@ class MetadataMode(str, Enum):
 def compress_image(
     input_file: Optional[str] = typer.Argument(None, help="Path to input image file (omit to read from stdin)"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Path to output file (omit to write to stdout)"),
-    api_key: str = typer.Option(..., "--api-key", help="Tinify API key"),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key", help="Tinify API key (default: tinify_api_key in ~/.config/compression-suite/config.toml)",
+    ),
     metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),
     disable_hard_limit: bool = typer.Option(False, "--disable-hard-limit", help="Bypass the 15MB input size limit"),

@@ -43,13 +43,25 @@ just install-tools
 
 Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Today, only exiftool is pinned (used by `compress-image` and `inspect`); a missing pinned tool makes the command fail with `tool_missing` (exit code 30).
 
-4. Verify the installation:
+4. Configure the Tinify API key (for `compress-image` only). Get one at https://tinypng.com/developers, then write it in compression-suite's configuration file, readable by you alone (see [Tinify API key](#tinify-api-key)):
+
+```bash
+mkdir -p ~/.config/compression-suite
+install -m 600 /dev/null ~/.config/compression-suite/config.toml
+echo 'tinify_api_key = "YOUR_KEY"' >> ~/.config/compression-suite/config.toml
+```
+
+5. Verify the installation:
 
 ```bash
 uv run compression_suite --help
 ```
 
 You should see the available commands listed. For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
+
+### Tinify API key
+
+`compress-image` uses `--api-key` if given, else `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when that variable is set). No environment variable is read, and the key never appears in any output. Without a key, the command fails with `api_key_missing` (exit code 13), naming the expected file. If the file is readable by the group or the others, a warning is printed on stderr: run `chmod 600` on it.
 
 # Core concepts
 
