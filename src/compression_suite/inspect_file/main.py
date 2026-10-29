@@ -1,0 +1,81 @@
+"""Core logic for inspect: describe any file (format, size, dates, important fields, metadata, motion photo).
+
+It never contacts Tinify and needs no key. A format nobody knows is not an error: only a missing input or a
+missing pinned tool make it fail.
+"""
+
+import mmap
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+from compression_suite.compress_image.main import SUPPORTED_FORMATS, iso_mtime, validate_input_file
+from compression_suite.utils.formats import detect_file_format
+from compression_suite.utils.metadata_diff import important_values, pixel_transparency, read_metadata
+from compression_suite.utils.motion_photo import detect_motion_photo
+from compression_suite.utils.pinned_tools import resolve_tool
+from compression_suite.utils.seft import FileBytes
+
+UNKNOWN_FORMAT = "unknown"
+DEFAULT_MIME_TYPE = "application/octet-stream"
+
+# MIME types of the formats detect_format recognises; exiftool names the others.
+MIME_TYPES = {
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "pdf": "application/pdf",
+    "avif": "image/avif",
+    "heic": "image/heic",
+    "heif": "image/heif",
+}
+
+
+@contextmanager
+def mapped_file(path: Path) -> Iterator[FileBytes]:
+    """The file's bytes, mapped rather than read: a video may weigh gigabytes. An empty file can't be mapped."""
+    with path.open("rb") as f:
+        if path.stat().st_size == 0:
+            yield b""
+            return
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            yield data
+
+
+def file_format(path: Path, tags: dict[str, Any]) -> tuple[str, str]:
+    """The format detected on the content, and its MIME type.
+
+    detect_format comes first, as for compress-image; exiftool, which also reads the content, names the rest.
+    """
+    fmt = detect_file_format(path)
+    if fmt != UNKNOWN_FORMAT:
+        return fmt, MIME_TYPES[fmt]
+    exiftool_type = tags.get("File:FileType")
+    if exiftool_type is None:
+        return UNKNOWN_FORMAT, tags.get("File:MIMEType", DEFAULT_MIME_TYPE)
+    return str(exiftool_type).lower(), tags.get("File:MIMEType", DEFAULT_MIME_TYPE)
+
+
+def inspect_file(input_file: str) -> dict[str, Any]:
+    """Describe a file and return the `result` object of the JSON contract."""
+    exiftool = resolve_tool("exiftool")
+    path = validate_input_file(input_file)
+    stat = path.stat()
+    mtime = iso_mtime(stat)
+    tags = read_metadata(exiftool, path)
+    fmt, mime_type = file_format(path, tags)
+    with mapped_file(path) as data:
+        motion_photo = detect_motion_photo(data, tags)
+    return {
+        "path": input_file,
+        "format": fmt,
+        "mime_type": mime_type,
+        "size_bytes": stat.st_size,
+        "mtime": mtime,
+        "compressible": fmt in SUPPORTED_FORMATS,
+        "motion_photo": motion_photo,
+        "important": important_values(tags, mtime, pixel_transparency(path)),
+        "metadata": tags,
+    }

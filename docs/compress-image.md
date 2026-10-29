@@ -103,7 +103,7 @@ A motion photo carries a short video after its image. Tinify only returns the im
 
 `--allow-motion-photo-loss` compresses it anyway. The XMP declaring the video (`XMP-GCamera:MotionPhoto*`, `XMP-GCamera:MicroVideo*`, `Container:Directory`) is then not copied back, so the compressed file no longer claims a video it doesn't have; the rest of the XMP is kept. These tags, the video itself (`Google:MotionPhotoVideo`, `Samsung:EmbeddedVideo*`) and the XMP toolkit when nothing else remained in the XMP (copied back otherwise) are expected losses, with the reason « photo animée : perte autorisée ».
 
-The detector (`utils/motion_photo.py`, meant to be reused by `inspect`) looks for these signals, in this order:
+The detector (`utils/motion_photo.py`, shared with [`inspect`](inspect.md)) looks for these signals, in this order:
 
 | Signal | Found when |
 |---|---|

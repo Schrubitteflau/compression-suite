@@ -12,6 +12,7 @@ The zone runs from the farthest entry to the end of the file. Only its entries a
 the index: a byte between them is not.
 """
 
+import mmap
 import struct
 from dataclasses import dataclass
 
@@ -21,6 +22,9 @@ SEFH_MARKER = b"SEFH"
 _INDEX_HEADER_SIZE = 12
 _INDEX_ENTRY_SIZE = 12
 _ENTRY_HEADER_SIZE = 8
+
+# A whole file in memory, or mapped: a large file (a video passed to inspect) needs not be read.
+FileBytes = bytes | mmap.mmap
 
 
 class SeftError(ValueError):
@@ -64,12 +68,12 @@ class SeftZone:
         return next((entry for entry in self.entries if entry.name == name), None)
 
 
-def read_seft(data: bytes) -> SeftZone | None:
+def read_seft(data: FileBytes) -> SeftZone | None:
     """Read the Samsung trailer at the end of `data`, or return None if the file doesn't end with `SEFT`.
 
     Raises SeftError if the file ends with `SEFT` but its index is unreadable or points outside the file.
     """
-    if not data.endswith(SEFT_MARKER):
+    if data[-len(SEFT_MARKER) :] != SEFT_MARKER:
         return None
     if len(data) < 8:
         raise SeftError("file too short for a SEFT index length")

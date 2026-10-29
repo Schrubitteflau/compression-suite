@@ -204,6 +204,21 @@ def _field_value(field: ImportantField, tags: dict[str, Any]) -> tuple[Any, str 
     return None, None
 
 
+def important_values(tags: dict[str, Any], mtime: str | None, transparency: bool | None) -> list[dict[str, Any]]:
+    """Every important field of a single file, in the diff's order, with its value and source (inspect).
+
+    `mtime` is the file's ISO 8601 mtime, the capture date of last resort.
+    """
+    fields = []
+    for field in IMPORTANT_FIELDS:
+        value, source = _field_value(field, tags)
+        if source is None and field.mtime_fallback and mtime is not None:
+            value, source = mtime, MTIME_SOURCE
+        fields.append({"key": field.key, "value": value, "source": source})
+    fields.append({"key": "transparency", "value": transparency, "source": TRANSPARENCY_SOURCE})
+    return fields
+
+
 def _status(before: Any, after: Any) -> str:
     """`absent` on both sides, `same`, `lost` after, or `changed` (including a value that appears)."""
     if before is None and after is None:

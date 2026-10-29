@@ -1,4 +1,4 @@
-"""Motion photo detection, `{detected, signals}`: used by compress-image, meant to be reused by inspect.
+"""Motion photo detection, `{detected, signals}`: shared by compress-image and inspect.
 
 A motion photo carries a video after its image, which a re-encoding drops. Signals, in this order:
 
@@ -21,7 +21,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 from compression_suite.utils.formats import detect_format
-from compression_suite.utils.seft import SeftError, read_seft
+from compression_suite.utils.seft import FileBytes, SeftError, read_seft
 
 XMP_GOOGLE_MOTION_PHOTO = "xmp_google_motion_photo"
 XMP_GOOGLE_MICRO_VIDEO = "xmp_google_micro_video"
@@ -35,7 +35,7 @@ SAMSUNG_MOTION_PHOTO_ENTRY = "MotionPhoto_Data"
 Span = tuple[int, int]
 
 
-def detect_motion_photo(data: bytes, tags: dict[str, Any]) -> dict[str, Any]:
+def detect_motion_photo(data: FileBytes, tags: dict[str, Any]) -> dict[str, Any]:
     """Look for every motion photo signal in a file's bytes and its exiftool tags."""
     signals = [*_xmp_signals(tags), *_trailer_signals(data)]
     return {"detected": bool(signals), "signals": signals}
@@ -54,7 +54,7 @@ def _xmp_signals(tags: dict[str, Any]) -> list[str]:
     return signals
 
 
-def _trailer_signals(data: bytes) -> list[str]:
+def _trailer_signals(data: FileBytes) -> list[str]:
     """The Samsung signal and `trailing_data`, read in the bytes after the image."""
     signals = []
     try:
@@ -73,7 +73,7 @@ def _trailer_signals(data: bytes) -> list[str]:
     return signals
 
 
-def _image_end(data: bytes) -> tuple[int, list[Span]] | None:
+def _image_end(data: FileBytes) -> tuple[int, list[Span]] | None:
     """Where the image ends and the images declared to follow it, or None if the format or the file can't tell."""
     fmt = detect_format(data[:64])
     try:
@@ -112,7 +112,7 @@ _CONTAINER_NS = "{http://ns.google.com/photos/1.0/container/}"
 _ITEM_NS = "{http://ns.google.com/photos/1.0/container/item/}"
 
 
-def _jpeg_end(data: bytes) -> tuple[int, list[Span]]:
+def _jpeg_end(data: FileBytes) -> tuple[int, list[Span]]:
     """End of the main image's EOI, and what its MPF segment and its XMP `Container:Directory` declare after it."""
     pos = 2  # after SOI
     mpf_images: list[Span] = []
@@ -140,7 +140,7 @@ def _jpeg_end(data: bytes) -> tuple[int, list[Span]]:
             pos = _entropy_coded_end(data, pos)
 
 
-def _entropy_coded_end(data: bytes, pos: int) -> int:
+def _entropy_coded_end(data: FileBytes, pos: int) -> int:
     """Position of the first marker after a scan's entropy-coded data (`FF00` is a stuffed byte, `FFD0`-`FFD7` RST)."""
     while True:
         pos = data.find(b"\xff", pos)
@@ -152,7 +152,7 @@ def _entropy_coded_end(data: bytes, pos: int) -> int:
         pos += 2
 
 
-def _mpf_images(data: bytes, tiff_start: int) -> list[Span]:
+def _mpf_images(data: FileBytes, tiff_start: int) -> list[Span]:
     """Spans of the images an MPF segment declares, but the first (the main image, at offset 0).
 
     The MP Entry tag lists 16 bytes per image: attributes, size and offset (relative to the MPF TIFF header).
@@ -216,7 +216,7 @@ def _container_spans(items: list[dict[str, str]], image_end: int, file_end: int)
 # --- PNG and WebP ----------------------------------------------------------------
 
 
-def _png_end(data: bytes) -> int:
+def _png_end(data: FileBytes) -> int:
     """End of the `IEND` chunk (length, type, data and CRC)."""
     pos = 8  # after the signature
     while True:
@@ -228,7 +228,7 @@ def _png_end(data: bytes) -> int:
             raise ValueError("PNG without IEND")
 
 
-def _webp_end(data: bytes) -> int:
+def _webp_end(data: FileBytes) -> int:
     """End of the RIFF chunk, from its size."""
     (size,) = struct.unpack_from("<I", data, 4)
     end = 8 + size

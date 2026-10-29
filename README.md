@@ -16,7 +16,7 @@ The main idea is to build a content-aware multimedia compression and processing 
     - Linux: `sudo apt install ffmpeg` (Ubuntu/Debian) or `sudo dnf install ffmpeg` (Fedora)
     - macOS: `brew install ffmpeg`
     - Windows: Download from the official website or use `winget install ffmpeg`
-4. **Perl**: Required to run the pinned exiftool (`compress-image`) - preinstalled on most Linux and macOS systems
+4. **Perl**: Required to run the pinned exiftool (`compress-image`, `inspect`) - preinstalled on most Linux and macOS systems
     - Linux: `sudo apt install perl` (Ubuntu/Debian) or `sudo dnf install perl` (Fedora)
 5. **just**: Runs the project recipes, including the pinned tools install - [installation guide](https://just.systems/man/en/packages.html)
 
@@ -41,7 +41,7 @@ uv sync
 just install-tools
 ```
 
-Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Today, only exiftool is pinned (used by `compress-image`); a missing pinned tool makes the command fail with `tool_missing` (exit code 30).
+Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Today, only exiftool is pinned (used by `compress-image` and `inspect`); a missing pinned tool makes the command fail with `tool_missing` (exit code 30).
 
 4. Verify the installation:
 
