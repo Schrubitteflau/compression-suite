@@ -140,6 +140,16 @@ def test_heic_is_described_but_not_compressible(tmp_path: Path):
     assert important["transparency"] == {"key": "transparency", "value": None, "source": None}  # Pillow can't decode it
 
 
+def test_dimensions_are_those_of_the_image_as_displayed(tmp_path: Path):
+    """The S23 portrait is stored 4000×3000 with `Rotate 90 CW`."""
+    important = _important(_inspect(_copy(S23_MOTION_PHOTO, tmp_path)))
+    assert important["dimensions"] == {
+        "key": "dimensions",
+        "value": {"width": 3000, "height": 4000},
+        "source": "File:ImageWidth",
+    }
+
+
 # --- Other files ----------------------------------------------------------------
 
 

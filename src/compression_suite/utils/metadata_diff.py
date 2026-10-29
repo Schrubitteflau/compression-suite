@@ -18,6 +18,7 @@ from typing import Any
 from PIL import Image
 
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.orientation import ORIENTATION_TAGS, displayed_size, orientation
 
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
@@ -28,10 +29,12 @@ REENCODING_REASON = "réencodage"
 # and its JPEG comment is real metadata.
 FILE_GROUP_COMPARED_TAGS = ("File:ImageWidth", "File:ImageHeight", "File:Comment")
 
-# Groups carrying the image dimensions, by format. A change of dimensions is never expected, whatever the command
-# declares (even `--metadata strip`): the image must keep its size.
+# Groups carrying the image dimensions, by format. They are compared as displayed (orientation applied): a change of
+# the displayed dimensions is never expected, whatever the command declares (even `--metadata strip`), the image must
+# keep its size. Stored dimensions swapped with the pixels by a quarter turn, the displayed ones kept, are expected.
 DIMENSION_GROUPS = ("File", "PNG", "RIFF")
 DIMENSION_TAGS = tuple(f"{group}:{name}" for group in DIMENSION_GROUPS for name in ("ImageWidth", "ImageHeight"))
+ROTATED_DIMENSIONS_REASON = "pixels pivotés selon l'orientation : l'image affichée garde ses dimensions"
 
 # Tags that describe an alpha channel, by format. Re-encoding may change them, or drop an alpha channel without any
 # transparent pixel, but losing a real transparency, or not being able to check it, is never expected.
@@ -50,6 +53,9 @@ TRANSPARENCY_SOURCE = "pixels"
 
 # Synthetic tag of a transparency loss read on the pixels, which no alpha tag may show (an RGBA output made opaque).
 TRANSPARENCY_TAG = f"{TRANSPARENCY_SOURCE}:transparency"
+
+# Synthetic tag of an output a viewer displays otherwise than the original (turned or mirrored), read on the pixels.
+ORIENTATION_TAG = f"{TRANSPARENCY_SOURCE}:orientation"
 
 MTIME_SOURCE = "file_mtime"
 
@@ -73,11 +79,15 @@ Candidate = str | dict[str, str]
 
 @dataclass(frozen=True)
 class ImportantField:
-    """A field always shown first, read from the first candidate present."""
+    """A field always shown first, read from the first candidate present.
+
+    A `displayed` field is a `{width, height}` given as displayed, swapped when the orientation turns the image.
+    """
 
     key: str
     candidates: tuple[Candidate, ...]
     mtime_fallback: bool = False
+    displayed: bool = False
 
 
 IMPORTANT_FIELDS = (
@@ -118,8 +128,9 @@ IMPORTANT_FIELDS = (
     ImportantField(
         "dimensions",
         tuple({"width": f"{group}:ImageWidth", "height": f"{group}:ImageHeight"} for group in DIMENSION_GROUPS),
+        displayed=True,
     ),
-    ImportantField("orientation", ("IFD0:Orientation", "XMP-tiff:Orientation")),
+    ImportantField("orientation", ORIENTATION_TAGS),
     ImportantField("color_profile", ("ICC_Profile:ProfileDescription",)),
 )
 
@@ -202,8 +213,13 @@ def _field_value(field: ImportantField, tags: dict[str, Any]) -> tuple[Any, str 
     """The value of an important field and the tag it comes from, or (None, None)."""
     for candidate in field.candidates:
         found = _candidate_value(candidate, tags)
-        if found is not None:
-            return found
+        if found is None:
+            continue
+        value, source = found
+        if field.displayed and {"width", "height"} <= value.keys():
+            width, height = displayed_size(value["width"], value["height"], tags)
+            value = {"width": width, "height": height}
+        return value, source
     return None, None
 
 
@@ -262,10 +278,16 @@ def _important_fields(
     return fields
 
 
-def _never_expected_tags(transparency: tuple[bool | None, bool | None]) -> set[str]:
-    """Tags whose loss is unexpected whatever the command declares: the dimensions, and the alpha tags unless the
-    original is known to be opaque or the output known to be transparent."""
-    never_expected = set(DIMENSION_TAGS)
+def _displayed_dimensions_kept(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Whether the image keeps its dimensions as displayed."""
+    [dimensions] = [field for field in IMPORTANT_FIELDS if field.key == "dimensions"]
+    return _field_value(dimensions, before)[0] == _field_value(dimensions, after)[0]
+
+
+def _never_expected_tags(transparency: tuple[bool | None, bool | None], dimensions_kept: bool) -> set[str]:
+    """Tags whose loss is unexpected whatever the command declares: the dimensions unless the displayed ones are kept,
+    and the alpha tags unless the original is known to be opaque or the output known to be transparent."""
+    never_expected = set() if dimensions_kept else set(DIMENSION_TAGS)
     before, after = transparency
     if before is not False and after is not True:
         never_expected.update(ALPHA_TAGS)
@@ -276,6 +298,8 @@ def _expected_reason(tag: str, expected_losses: list[ExpectedLoss], never_expect
     """The reason of the first expected loss matching the tag, the `File` group's, or None if the loss is unexpected."""
     if tag in never_expected:
         return None
+    if tag in DIMENSION_TAGS:
+        return ROTATED_DIMENSIONS_REASON
     for loss in expected_losses:
         if fnmatchcase(tag, loss.pattern):
             return loss.reason
@@ -290,15 +314,17 @@ def diff_metadata(
     expected_losses: list[ExpectedLoss],
     transparency: tuple[bool | None, bool | None],
     mtimes: tuple[str, str] | None = None,
+    same_picture: bool | None = None,
 ) -> dict[str, Any]:
     """Classify the differences between the tags of the original (`before`) and of its processed copy (`after`).
 
     `transparency` tells, for both files, whether a pixel is not fully opaque (`pixel_transparency`).
     `mtimes` are the ISO 8601 mtimes of both files, the capture date of last resort. Leave it out when the
-    original's mtime is unknown (stdin).
+    original's mtime is unknown (stdin). `same_picture` tells whether a viewer displays the copy as the original
+    (`same_displayed_picture`), None when it wasn't checked.
     """
     expected, unexpected = [], []
-    never_expected = _never_expected_tags(transparency)
+    never_expected = _never_expected_tags(transparency, _displayed_dimensions_kept(before, after))
     for tag, value in before.items():
         if tag in after and after[tag] == value:
             continue
@@ -312,6 +338,10 @@ def diff_metadata(
     transparency_loss = _transparency_loss(transparency)
     if transparency_loss is not None:
         unexpected.append(transparency_loss)
+    if same_picture is False:
+        unexpected.append(
+            {"tag": ORIENTATION_TAG, "kind": "changed", "before": orientation(before), "after": orientation(after)}
+        )
     return {
         "important": _important_fields(before, after, mtimes, transparency),
         "unexpected_losses": unexpected,

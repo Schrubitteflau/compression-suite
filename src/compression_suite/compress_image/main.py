@@ -1,5 +1,6 @@
 """Core logic for compress-image: Tinify API compression with metadata preservation."""
 
+import io
 import os
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import tinify
+from PIL import Image
 from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
@@ -27,6 +29,12 @@ from compression_suite.utils.metadata_diff import (
     read_metadata,
 )
 from compression_suite.utils.motion_photo import detect_motion_photo
+from compression_suite.utils.orientation import (
+    ORIENTATION_TAGS,
+    is_oriented,
+    orientation_applied,
+    same_displayed_picture,
+)
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
@@ -114,6 +122,22 @@ MOTION_PHOTO_LOSSES = [
 
 EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in MOTION_PHOTO_LOSSES if loss.excluded_tag]
 
+ORIENTATION_REASON = "orientation appliquée aux pixels"
+
+# Tags giving the size of the stored pixels, which a quarter turn applied by Tinify swaps: (tag, width or height).
+STORED_SIZE_TAGS = (
+    ("IFD0:ImageWidth", 0),
+    ("IFD0:ImageHeight", 1),
+    ("ExifIFD:ExifImageWidth", 0),
+    ("ExifIFD:ExifImageHeight", 1),
+)
+
+# Losses of an image whose orientation Tinify applied to the pixels: copied back, the orientation would be applied a
+# second time. It is written as normal instead, and the stored size tags take the size of the compressed pixels.
+ORIENTATION_APPLIED_LOSSES = [
+    ExpectedLoss(tag, ORIENTATION_REASON) for tag in (*ORIENTATION_TAGS, *(tag for tag, _ in STORED_SIZE_TAGS))
+]
+
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
 # "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost). Without XMPToolkit,
 # exiftool would name itself as the toolkit of the XMP it rewrites.
@@ -197,8 +221,23 @@ def call_tinify(prepare_source: Callable[[], Any]) -> bytes:
         raise CommandError(ErrorCode.TINIFY_UNAVAILABLE, f"Connection error: {e}") from e
 
 
-def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_exclusions: list[str]):
-    """Copy metadata from original to compressed file using exiftool, excluding problematic tags and extra ones."""
+def applied_orientation_tags(original_tags: dict[str, Any], compressed: bytes) -> list[str]:
+    """exiftool assignments for pixels Tinify already turned: a normal orientation, the compressed pixels' size.
+
+    Only the tags of the original are written. Applied after the copy in the same command, they win over it.
+    """
+    with Image.open(io.BytesIO(compressed)) as image:
+        size = image.size
+    return [f"-{tag}#=1" for tag in ORIENTATION_TAGS if tag in original_tags] + [
+        f"-{tag}={size[axis]}" for tag, axis in STORED_SIZE_TAGS if tag in original_tags
+    ]
+
+
+def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_args: list[str]):
+    """Copy metadata from original to compressed file using exiftool, excluding problematic tags.
+
+    `extra_args` are further exclusions or assignments, applied after the copy.
+    """
     cmd = [
         str(exiftool),
         "-TagsFromFile",
@@ -206,7 +245,7 @@ def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path
         "-all:all",
         *EXIFTOOL_EXTRA_TAGS,
         *EXIFTOOL_EXCLUDE_TAGS,
-        *extra_exclusions,
+        *extra_args,
         "-overwrite_original",
         str(compressed_path),
     ]
@@ -340,23 +379,34 @@ def compress_image(
 
         compressed_buffer = call_tinify(prepare_source)
 
-        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None]:
-            """Copy the metadata, read the final bytes, tags and transparency, then give the file the original's dates.
+        oriented = is_oriented(original_tags)
+        rotated = oriented and orientation_applied(exiftool_source, compressed_buffer)
+        orientation_args = applied_orientation_tags(original_tags, compressed_buffer) if rotated else []
+        if rotated:
+            expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
 
-            The dates come last: exiftool rewrites the file, and reading it refreshes its atime.
+        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None, bool | None]:
+            """Copy the metadata, read the final bytes, tags, transparency and whether it is displayed as the original,
+            then give the file the original's dates.
+
+            The dates come last: exiftool rewrites the file, and reading it refreshes its atime. Only an oriented
+            original is checked for how it is displayed: without orientation, nothing can turn it.
             """
             if metadata == "keep":
-                preserve_metadata(exiftool, exiftool_source, compressed_path, motion_photo_exclusions)
+                preserve_metadata(
+                    exiftool, exiftool_source, compressed_path, motion_photo_exclusions + orientation_args
+                )
             final_buffer = compressed_path.read_bytes()
             final_tags = read_metadata(exiftool, compressed_path)
             final_transparency = pixel_transparency(compressed_path)
+            same_picture = same_displayed_picture(exiftool_source, compressed_path) if oriented else None
             if original_stat is not None:
                 os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-            return final_buffer, final_tags, final_transparency
+            return final_buffer, final_tags, final_transparency, same_picture
 
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
-            final_buffer, final_tags, final_transparency = write_atomically(
+            final_buffer, final_tags, final_transparency, same_picture = write_atomically(
                 output_path,
                 compressed_buffer,
                 apply_metadata_and_dates,
@@ -365,7 +415,7 @@ def compress_image(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                final_buffer, final_tags, final_transparency = apply_metadata_and_dates(tmp_compressed)
+                final_buffer, final_tags, final_transparency, same_picture = apply_metadata_and_dates(tmp_compressed)
             sys.stdout.buffer.write(final_buffer)
 
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
@@ -376,6 +426,7 @@ def compress_image(
         expected_losses if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
+        same_picture=same_picture,
     )
 
     output_size = len(final_buffer)

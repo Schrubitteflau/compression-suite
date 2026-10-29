@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import Result
-from PIL import Image
+from PIL import Image, ImageOps
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
@@ -54,8 +54,8 @@ MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
 
 def _reencode_like_tinify(data: bytes) -> bytes:
-    """Re-encode the pixels without any metadata nor trailer, as Tinify does."""
-    image = Image.open(io.BytesIO(data))
+    """Re-encode the pixels without any metadata nor trailer, as Tinify does, with the orientation applied to them."""
+    image = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
     image.info.clear()
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=80)
@@ -388,6 +388,18 @@ def test_allowed_loss_of_the_s23_motion_photo_gives_its_reason(tmp_path: Path):
         "XMP-x:XMPToolkit",
     ):
         assert expected[tag] == MOTION_PHOTO_REASON, tag
+
+
+def test_s23_motion_photo_turned_by_tinify_is_not_turned_twice(tmp_path: Path):
+    """The real S23 portrait is stored 4000×3000 with `Rotate 90 CW`: Tinify returns its pixels turned, 3000×4000."""
+    result, _ = _invoke(S23_MOTION_PHOTO, tmp_path / "out.jpg", "--allow-motion-photo-loss", reencode=True)
+    metadata = json.loads(result.stdout)["result"]["metadata"]
+    assert metadata["after"]["IFD0:Orientation"] == "Horizontal (normal)"
+    assert (metadata["after"]["File:ImageWidth"], metadata["after"]["File:ImageHeight"]) == (3000, 4000)
+    assert (metadata["after"]["ExifIFD:ExifImageWidth"], metadata["after"]["ExifIFD:ExifImageHeight"]) == (3000, 4000)
+    dimensions = {field["key"]: field for field in metadata["important"]}["dimensions"]
+    assert (dimensions["before"], dimensions["status"]) == ({"width": 3000, "height": 4000}, "same")
+    assert metadata["unexpected_losses"] == []
 
 
 def test_xmp_other_than_the_motion_photo_is_kept(tmp_path: Path):

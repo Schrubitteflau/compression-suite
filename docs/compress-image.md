@@ -60,7 +60,18 @@ Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no 
 - **ThumbnailImage**: the EXIF thumbnail shows the original image, it is removed on purpose
 - **Compression**: belongs to the thumbnail
 
-This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, orientation, the colour profile (e.g. the S23's "DCI-P3 D65") and all other tags. What can't be kept is listed in the metadata diff below.
+This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, the colour profile (e.g. the S23's "DCI-P3 D65") and all other tags. The orientation is kept unless Tinify already applied it (see below). What can't be kept is listed in the metadata diff below.
+
+### Orientation
+
+Tinify applies the EXIF orientation to the pixels it returns: a S23 portrait stored 4000×3000 with `Rotate 90 CW` comes back 3000×4000, a `Mirror horizontal` JPEG comes back mirrored (both seen on real calls, 0.4/255 apart from the original as displayed). Copied back, the orientation would be applied a second time and the photo displayed lying down.
+
+So when the original has an orientation other than normal, `compress-image` compares the compressed pixels with the original's, as stored and as displayed (on small grayscale copies, `utils/orientation.py`). When they are those of the original as displayed:
+
+- the orientation is written as normal (`Horizontal (normal)`) in `IFD0:Orientation` and `XMP-tiff:Orientation`, for those the original has;
+- `IFD0:ImageWidth`/`ImageHeight` and `ExifIFD:ExifImageWidth`/`ExifImageHeight`, when the original has them, take the size of the compressed pixels: they describe the stored image, and left at 4000×3000 they would contradict pixels now stored 3000×4000.
+
+Otherwise (pixels as stored, or an image Pillow can't decode), the orientation is copied back like any other tag.
 
 ### `--metadata=strip`
 
@@ -89,7 +100,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - `capture_date`: `ExifIFD:DateTimeOriginal`, else the XMP or PNG date, else the file's mtime (`source: "file_mtime"`, file to file only)
   - `gps`: `{latitude, latitude_ref, longitude, longitude_ref, altitude, altitude_ref}` (the parts present)
   - `camera`: `{make, model}`
-  - `dimensions`: `{width, height}`
+  - `dimensions`: `{width, height}` as displayed, orientation applied: a portrait stored 4000×3000 with `Rotate 90 CW` is `{width: 3000, height: 4000}`
   - `orientation`
   - `color_profile`: description of the ICC profile, `null` if none
   - `transparency`: whether at least one pixel is not fully opaque, read on the pixels decoded by Pillow (`source: "pixels"`), for every format. `before` or `after` is `null`, and `status` is `unverified`, when Pillow can't decode that file. `lost` means a real transparency disappeared
@@ -97,8 +108,10 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - the EXIF thumbnail (`IFD1:*`) and its `Compression`
   - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
-- **Never expected**, whatever `--metadata`: a change of the dimensions, and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
-- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). A real transparency lost, or that couldn't be checked, is also listed under the synthetic tag `pixels:transparency` (`kind: "removed"` or `"unverified"`, `before`/`after` as in the `transparency` field), since an output can keep its alpha tags with every pixel made opaque. An original known to be opaque gives no such entry. In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
+  - when Tinify applied the orientation to the pixels, the orientation and the stored size tags rewritten (see [Orientation](#orientation)), with the reason « orientation appliquée aux pixels »
+  - the stored dimensions (`File:ImageWidth`…) swapped with the pixels while the displayed ones are kept, with the reason « pixels pivotés selon l'orientation : l'image affichée garde ses dimensions »
+- **Never expected**, whatever `--metadata`: a change of the dimensions as displayed (each file's dimensions turned by its own orientation), an output a viewer displays otherwise than the original, and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
+- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). A real transparency lost, or that couldn't be checked, is also listed under the synthetic tag `pixels:transparency` (`kind: "removed"` or `"unverified"`, `before`/`after` as in the `transparency` field), since an output can keep its alpha tags with every pixel made opaque. An original known to be opaque gives no such entry. An original with an orientation other than normal whose output a viewer displays otherwise (turned or mirrored, each with its own orientation: an orientation applied twice, for instance) is listed under the synthetic tag `pixels:orientation` (`kind: "changed"`, `before`/`after` the orientation of each file); this is read on the pixels, since a mirror applied twice changes no dimension. In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.
 - Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageStat
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
@@ -30,13 +30,25 @@ REENCODING_REASON = "réencodage"
 SCREENSHOT_MTIME_NS = 1_660_039_872_654_321_000
 
 
-def _reencode_like_tinify(data: bytes, resize: float = 1.0, drop_alpha: bool = False) -> bytes:
+def _reencode_like_tinify(
+    data: bytes,
+    resize: float = 1.0,
+    drop_alpha: bool = False,
+    apply_orientation: bool = True,
+    transpose: Image.Transpose | None = None,
+) -> bytes:
     """Re-encode the pixels without any metadata, as Tinify does (progressive JPEG, palette PNG, same format else).
 
-    `drop_alpha` flattens the image first, as a faulty compression would.
+    Tinify applies the EXIF orientation to the pixels (seen on real calls, mirror included); `apply_orientation=False`
+    keeps them as stored. `transpose` is applied to the stored pixels instead, and `drop_alpha` flattens the image
+    first, as a faulty compression would.
     """
     image = Image.open(io.BytesIO(data))
     fmt = image.format
+    if transpose is not None:
+        image = image.transpose(transpose)
+    elif apply_orientation:
+        image = ImageOps.exif_transpose(image)
     image.info.clear()  # Pillow would otherwise write the ICC profile and EXIF back
     if resize != 1.0:
         image = image.resize((int(image.width * resize), int(image.height * resize)))
@@ -53,15 +65,25 @@ def _reencode_like_tinify(data: bytes, resize: float = 1.0, drop_alpha: bool = F
     return buf.getvalue()
 
 
-def _fake_tinify(resize: float = 1.0, drop_alpha: bool = False, output: bytes | None = None):
+def _fake_tinify(
+    resize: float = 1.0,
+    drop_alpha: bool = False,
+    output: bytes | None = None,
+    apply_orientation: bool = True,
+    transpose: Image.Transpose | None = None,
+):
     """Patch tinify so the compressed result is the input re-encoded without metadata, or `output`."""
     mock = MagicMock()
     mock.compression_count = 42
 
     def make_source(data: bytes):
         source = MagicMock()
-        reencoded = _reencode_like_tinify(data, resize, drop_alpha) if output is None else output
-        source.to_buffer.return_value = reencoded
+        if output is None:
+            source.to_buffer.return_value = _reencode_like_tinify(
+                data, resize, drop_alpha, apply_orientation, transpose
+            )
+        else:
+            source.to_buffer.return_value = output
         return source
 
     mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
@@ -76,9 +98,11 @@ def _compress(
     resize: float = 1.0,
     drop_alpha: bool = False,
     output: bytes | None = None,
+    apply_orientation: bool = True,
+    transpose: Image.Transpose | None = None,
 ) -> dict:
     """Run compress-image --json and return the metadata diff."""
-    with _fake_tinify(resize, drop_alpha, output):
+    with _fake_tinify(resize, drop_alpha, output, apply_orientation, transpose):
         result = runner.invoke(
             app,
             ["compress-image", str(src), "--output", str(out), "--api-key", "test-key", "--json", *args],
@@ -425,6 +449,141 @@ def test_unverified_transparency_of_an_opaque_original_is_no_loss(tmp_path: Path
     metadata = _compress(_screenshot(tmp_path), tmp_path / "out.png", "--metadata", "strip", output=corrupt_png)
     assert _important(metadata)["transparency"]["status"] == "unverified"
     assert "pixels:transparency" not in {loss["tag"] for loss in metadata["unexpected_losses"]}
+
+
+# --- Orientation --------------------------------------------------------------
+
+ORIENTATION_REASON = "orientation appliquée aux pixels"
+ROTATED_DIMENSIONS_REASON = "pixels pivotés selon l'orientation : l'image affichée garde ses dimensions"
+ROTATE_90_CW = 6
+MIRROR_HORIZONTAL = 2
+
+ORIENTATION_XMP = """<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="{orientation}"/>
+  </rdf:RDF>
+</x:xmpmeta>"""
+
+
+def _oriented_jpeg(tmp_path: Path, orientation: int, xmp: bool = False) -> Path:
+    """Write an 80×60 JPEG whose shapes tell every rotation and mirror apart, with its orientation and EXIF size.
+
+    `xmp` also writes the orientation in the XMP (`XMP-tiff:Orientation`).
+    """
+    image = Image.new("RGB", (80, 60), (240, 240, 240))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((4, 4, 30, 24), fill=(200, 30, 30))
+    draw.ellipse((52, 36, 76, 56), fill=(30, 60, 200))
+    draw.polygon([(40, 8), (76, 8), (76, 28)], fill=(30, 160, 60))
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    exif.get_ifd(0x8769).update({0xA002: 80, 0xA003: 60})  # ExifImageWidth, ExifImageHeight
+    src = tmp_path / "photo.jpg"
+    options = {"xmp": ORIENTATION_XMP.format(orientation=orientation).encode()} if xmp else {}
+    image.save(src, format="JPEG", quality=95, exif=exif.tobytes(), **options)
+    return src
+
+
+def _displayed_difference(a: Path, b: Path) -> float:
+    """The mean difference, out of 255, between two images as a viewer displays them (orientation applied)."""
+    first, second = (ImageOps.exif_transpose(Image.open(path)).convert("RGB") for path in (a, b))
+    assert first.size == second.size
+    return sum(ImageStat.Stat(ImageChops.difference(first, second)).mean) / 3
+
+
+@pytest.mark.parametrize(
+    ("orientation", "name"), [(ROTATE_90_CW, "Rotate 90 CW"), (MIRROR_HORIZONTAL, "Mirror horizontal")]
+)
+def test_orientation_applied_by_tinify_is_reset(tmp_path: Path, orientation: int, name: str):
+    src = _oriented_jpeg(tmp_path, orientation)
+    out = tmp_path / "out.jpg"
+    metadata = _compress(src, out)
+    assert metadata["unexpected_losses"] == []
+    assert metadata["after"]["IFD0:Orientation"] == "Horizontal (normal)"
+    assert _expected(metadata)["IFD0:Orientation"] == {
+        "tag": "IFD0:Orientation",
+        "before": name,
+        "reason": ORIENTATION_REASON,
+    }
+    assert _displayed_difference(src, out) < 5
+
+
+@pytest.mark.parametrize(
+    ("orientation", "name"), [(ROTATE_90_CW, "Rotate 90 CW"), (MIRROR_HORIZONTAL, "Mirror horizontal")]
+)
+def test_orientation_not_applied_by_tinify_is_copied_back(tmp_path: Path, orientation: int, name: str):
+    src = _oriented_jpeg(tmp_path, orientation)
+    out = tmp_path / "out.jpg"
+    metadata = _compress(src, out, apply_orientation=False)
+    assert metadata["unexpected_losses"] == []
+    assert metadata["after"]["IFD0:Orientation"] == name
+    assert "IFD0:Orientation" not in _expected(metadata)
+    assert _displayed_difference(src, out) < 5
+
+
+def test_dimensions_of_a_rotated_portrait_are_compared_as_displayed(tmp_path: Path):
+    metadata = _compress(_oriented_jpeg(tmp_path, ROTATE_90_CW), tmp_path / "out.jpg")
+    assert _important(metadata)["dimensions"] == {
+        "key": "dimensions",
+        "before": {"width": 60, "height": 80},
+        "after": {"width": 60, "height": 80},
+        "source": "File:ImageWidth",
+        "status": "same",
+    }
+    assert _expected(metadata)["File:ImageWidth"] == {
+        "tag": "File:ImageWidth",
+        "before": 80,
+        "reason": ROTATED_DIMENSIONS_REASON,
+    }
+
+
+def test_exif_dimensions_follow_the_rotated_pixels(tmp_path: Path):
+    metadata = _compress(_oriented_jpeg(tmp_path, ROTATE_90_CW), tmp_path / "out.jpg")
+    assert metadata["after"]["ExifIFD:ExifImageWidth"] == 60
+    assert metadata["after"]["ExifIFD:ExifImageHeight"] == 80
+    assert _expected(metadata)["ExifIFD:ExifImageWidth"]["reason"] == ORIENTATION_REASON
+
+
+def test_xmp_orientation_is_reset_too(tmp_path: Path):
+    metadata = _compress(_oriented_jpeg(tmp_path, ROTATE_90_CW, xmp=True), tmp_path / "out.jpg")
+    assert metadata["before"]["XMP-tiff:Orientation"] == "Rotate 90 CW"
+    assert metadata["after"]["XMP-tiff:Orientation"] == "Horizontal (normal)"
+    assert metadata["unexpected_losses"] == []
+
+
+@pytest.mark.parametrize(
+    ("orientation", "transpose"),
+    [
+        (ROTATE_90_CW, Image.Transpose.ROTATE_90),  # turned the other way
+        (ROTATE_90_CW, Image.Transpose.ROTATE_180),  # turned twice, back to the stored layout
+        (MIRROR_HORIZONTAL, Image.Transpose.FLIP_TOP_BOTTOM),
+    ],
+)
+def test_output_displayed_otherwise_than_the_original_is_unexpected(
+    tmp_path: Path, orientation: int, transpose: Image.Transpose
+):
+    metadata = _compress(_oriented_jpeg(tmp_path, orientation), tmp_path / "out.jpg", transpose=transpose)
+    assert "pixels:orientation" in {loss["tag"] for loss in metadata["unexpected_losses"]}
+
+
+def test_changed_displayed_dimensions_of_a_rotated_portrait_are_unexpected(tmp_path: Path):
+    metadata = _compress(_oriented_jpeg(tmp_path, ROTATE_90_CW), tmp_path / "out.jpg", resize=0.5)
+    assert {"tag": "File:ImageWidth", "kind": "changed", "before": 80, "after": 30} in metadata["unexpected_losses"]
+    assert _important(metadata)["dimensions"]["status"] == "changed"
+
+
+def test_strip_of_a_portrait_rotated_by_tinify_has_no_unexpected_loss(tmp_path: Path):
+    metadata = _compress(_oriented_jpeg(tmp_path, ROTATE_90_CW), tmp_path / "out.jpg", "--metadata", "strip")
+    assert metadata["unexpected_losses"] == []
+
+
+def test_strip_of_a_portrait_tinify_did_not_rotate_is_displayed_otherwise(tmp_path: Path):
+    """Without its orientation, a viewer shows the stored pixels: the portrait is displayed lying down."""
+    metadata = _compress(
+        _oriented_jpeg(tmp_path, ROTATE_90_CW), tmp_path / "out.jpg", "--metadata", "strip", apply_orientation=False
+    )
+    assert _important(metadata)["dimensions"]["status"] == "changed"
+    assert "pixels:orientation" in {loss["tag"] for loss in metadata["unexpected_losses"]}
 
 
 # --- --metadata strip ---------------------------------------------------------
