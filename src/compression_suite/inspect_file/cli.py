@@ -23,6 +23,8 @@ def print_report(result: dict[str, Any]) -> None:
     """Write the description of a file on stdout, for a human."""
     motion_photo = result["motion_photo"]
     signals = f" ({', '.join(motion_photo['signals'])})" if motion_photo["detected"] else ""
+    corrupt = result["corrupt"]
+    reason = f" ({corrupt['reason']})" if corrupt["detected"] else ""
     lines = [
         f"File: {result['path']}",
         f"Format: {result['format']} ({result['mime_type']})",
@@ -30,6 +32,7 @@ def print_report(result: dict[str, Any]) -> None:
         f"Modified: {result['mtime']}",
         f"Compressible: {_format_value(result['compressible'])}",
         f"Motion photo: {_format_value(motion_photo['detected'])}{signals}",
+        f"Corrupt: {_format_value(corrupt['detected'])}{reason}",
         "",
         "Important fields:",
     ]

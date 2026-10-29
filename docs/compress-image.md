@@ -122,6 +122,12 @@ The detector (`utils/motion_photo.py`, shared with [`inspect`](inspect.md)) look
 - **Known structures** after the image: the images declared by a JPEG's MPF segment (each must be a JPEG inside the file), the items declared by its XMP `Container:Directory` (the primary image's `Padding` after it, then the other items, `Length` plus `Padding` each, ending the file; a directory that doesn't fit explains nothing), and the entries and index of a readable Samsung `SEFT` zone (read by `utils/seft.py`). A `SEFT` zone without `MotionPhoto_Data`, as on many S23 photos, gives no signal. An unreadable index, or bytes outside the entries it describes, give `trailing_data`.
 - Any unexplained byte is refused, even zero padding after the EOI: on 543 real phone photos (92 with a `SEFT` zone), only one WhatsApp JPEG carrying 900 KB of unknown bytes after its image was flagged.
 
+## Damaged files
+
+A file whose format is recognised but that can't be decoded to the end (a truncated JPEG, a file cut by an interrupted synchronisation) is refused **before** calling Tinify, without using a credit: `input_corrupt` (exit 27), `details.detected_format`, the decoder's message in `message`. It is a problem of the file, not of compression-suite. The input is fully decoded by Pillow first (`utils/decoding.py`, shared with [`inspect`](inspect.md) and [`preview`](preview.md)); an image above Pillow's decompression-bomb limit (~179 megapixels) is not decoded, so not checked.
+
+exiftool is not the judge: it still describes a file it refuses, with a warning. When it writes nothing at all, it is exiftool itself that failed: `internal_error` (exit 50), its stderr in `message`.
+
 ## I/O design
 
 - Without `--json`, **stdout is reserved for binary image data** (when `--output` is omitted) — all reporting goes to stderr
@@ -186,8 +192,9 @@ Exit codes are the same with or without `--json`.
 | `output_exists` | 24 | Output exists without `--overwrite`, or is a directory | |
 | `metadata_copy_failed` | 25 | exiftool failed to copy metadata back | |
 | `input_unreadable` | 26 | Input present but not readable (permissions) | |
+| `input_corrupt` | 27 | Input of a supported format that its decoder can't read to the end (truncated, for instance), refused before Tinify | `detected_format` |
 | `tool_missing` | 30 | Pinned exiftool not installed, not runnable, or of another version than the manifest's | `tool`, `expected_version`, `install_command` |
-| `internal_error` | 50 | Any other error | |
+| `internal_error` | 50 | Any other error, exiftool failing without describing the file among them | |
 | `interrupted` | 130 | Interrupted by user (Ctrl+C) | |
 
 ## Composability

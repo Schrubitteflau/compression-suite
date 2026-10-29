@@ -1,7 +1,8 @@
 """Core logic for inspect: describe any file (format, size, dates, important fields, metadata, motion photo).
 
-It never contacts Tinify and needs no key. A format nobody knows is not an error: only a missing input or a
-missing pinned tool make it fail.
+It never contacts Tinify and needs no key. A format nobody knows is not an error, nor is a damaged file, which it
+still describes and flags as `corrupt`: only a missing or unreadable input, or a missing or failing pinned tool, make
+it fail.
 """
 
 import mmap
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from compression_suite.compress_image.main import SUPPORTED_FORMATS, iso_mtime, validate_input_file
+from compression_suite.utils.decoding import corruption_reason
 from compression_suite.utils.formats import UNKNOWN_FORMAT, detect_file_format
 from compression_suite.utils.metadata_diff import important_values, pixel_transparency, read_metadata
 from compression_suite.utils.motion_photo import detect_motion_photo
@@ -66,6 +68,7 @@ def inspect_file(input_file: str) -> dict[str, Any]:
     fmt, mime_type = file_format(detected_format, tags)
     with mapped_file(path) as data:
         motion_photo = detect_motion_photo(data, tags)
+    corrupt_reason = corruption_reason(path, detected_format)
     return {
         "path": input_file,
         "format": fmt,
@@ -74,6 +77,7 @@ def inspect_file(input_file: str) -> dict[str, Any]:
         "mtime": mtime,
         "compressible": detected_format in SUPPORTED_FORMATS,  # what compress-image itself checks
         "motion_photo": motion_photo,
+        "corrupt": {"detected": corrupt_reason is not None, "reason": corrupt_reason},
         "important": important_values(tags, mtime, pixel_transparency(path)),
         "metadata": tags,
     }

@@ -2,7 +2,7 @@
 
 Describe any file, compressible or not: real format, MIME type, size, modification date, important fields, full metadata and motion photo signals.
 
-It never contacts Tinify and needs no API key. A format nobody knows is not an error: only a missing input (`input_not_found`, exit 23), an input present but unreadable (`input_unreadable`, exit 26) and a missing pinned exiftool (`tool_missing`, exit 30) make it fail.
+It never contacts Tinify and needs no API key. A format nobody knows is not an error, nor is a damaged file, which is still described and flagged by `corrupt`: only a missing input (`input_not_found`, exit 23), an input present but unreadable (`input_unreadable`, exit 26), a missing pinned exiftool (`tool_missing`, exit 30) and exiftool failing without describing the file (`internal_error`, exit 50) make it fail.
 
 ## Prerequisites
 
@@ -41,6 +41,7 @@ compression_suite inspect video.mp4 --json
     "mtime": "2024-06-15T10:00:00.123456+00:00",
     "compressible": true,
     "motion_photo": {"detected": false, "signals": []},
+    "corrupt": {"detected": false, "reason": null},
     "important": [
       {"key": "capture_date", "value": "2024:06:15 12:00:00", "source": "ExifIFD:DateTimeOriginal"},
       {"key": "color_profile", "value": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription"}
@@ -55,6 +56,7 @@ compression_suite inspect video.mp4 --json
 - **`mtime`**: ISO 8601, in UTC, to the microsecond.
 - **`compressible`**: whether `compress-image` accepts the format (JPEG, PNG, WebP, AVIF), as its own detector reads it, never from exiftool's name. A motion photo stays compressible: `compress-image` refuses it for its video, not for its format.
 - **`motion_photo`**: the same detector and signals as [`compress-image`](compress-image.md#motion-photos). The file is mapped rather than read, so a large video costs no memory.
+- **`corrupt`**: whether the format is recognised but the file can't be decoded to the end (truncated, cut by an interrupted synchronisation), `reason` being the decoder's message, else `null`. The file is fully decoded, by Pillow for JPEG, PNG, WebP, GIF (its first frame) and AVIF, by pillow-heif for HEIC and HEIF, as [`preview`](preview.md) does. Any other format (PDF, video, unknown) is never flagged, nor is an image above Pillow's decompression-bomb limit (~179 megapixels), which is not decoded. A damaged file is still a success: its size, date and metadata are described as far as exiftool reads them. `compress-image` and `preview` refuse such a file (`input_corrupt`, exit 27).
 - **`important`**: the same fields, in the same order, as the metadata diff of `compress-image`, with only `value` and `source`. `capture_date` falls back on the file's mtime (`source: "file_mtime"`). `value` and `source` are `null` when nothing gives the field. `transparency` is read on the pixels decoded by Pillow (`source: "pixels"`); both are `null` when Pillow can't decode the file.
 - **`metadata`**: every tag read by the pinned exiftool (`exiftool -j -G1 -a`, keyed `Group:Name`), without the ignored groups `System`, `Composite` and `ExifTool`.
 

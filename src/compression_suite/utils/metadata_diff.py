@@ -17,6 +17,8 @@ from typing import Any
 
 from PIL import Image
 
+from compression_suite.utils.contract import CommandError, ErrorCode
+
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
 
@@ -125,8 +127,9 @@ IMPORTANT_FIELDS = (
 def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     """Read every tag of a file (`Group:Name` -> value), without the ignored groups.
 
-    exiftool still describes a file whose format it doesn't know (with an `ExifTool:Error`, in an ignored group):
-    no output at all means exiftool itself failed, which is an error rather than a file without tags.
+    exiftool still describes a file whose format it doesn't know or that it refuses (with an `ExifTool:Error` or
+    `ExifTool:Warning`, in an ignored group): no output at all means exiftool itself failed (`internal_error`),
+    never the file. A damaged file is told by its decoder (utils.decoding), not by exiftool.
     """
     result = subprocess.run(
         [str(exiftool), "-j", "-G1", "-a", str(path)],
@@ -137,7 +140,9 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     try:
         [tags] = json.loads(result.stdout)
     except ValueError as e:
-        raise RuntimeError(f"exiftool could not read {path}: {result.stderr.strip()}") from e
+        raise CommandError(
+            ErrorCode.INTERNAL_ERROR, f"exiftool failed on {path} (exit {result.returncode}): {result.stderr.strip()}"
+        ) from e
     return {
         tag: value for tag, value in tags.items() if tag != "SourceFile" and tag.split(":", 1)[0] not in IGNORED_GROUPS
     }

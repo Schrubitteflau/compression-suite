@@ -9,9 +9,14 @@ import io
 from pathlib import Path
 from typing import Any
 
-import pillow_heif
-
-from compression_suite.compress_image.main import check_format, check_output, validate_input_file, write_atomically
+from compression_suite.compress_image.main import (
+    check_format,
+    check_output,
+    corrupt_input_error,
+    validate_input_file,
+    write_atomically,
+)
+from compression_suite.utils.decoding import CorruptImageError, decode_image
 from compression_suite.utils.formats import detect_file_format
 
 PREVIEWABLE_FORMATS = ("heic", "heif")
@@ -19,14 +24,18 @@ PREVIEWABLE_FORMATS = ("heic", "heif")
 JPEG_QUALITY = 90
 
 
-def heic_to_jpeg(input_path: Path) -> tuple[bytes, int, int]:
+def heic_to_jpeg(input_path: Path, detected_format: str) -> tuple[bytes, int, int]:
     """Decode the primary image and encode it as a JPEG, at full resolution, with its ICC profile.
 
     libheif applies the HEIF transformations (`irot`, `imir`) to the pixels and pillow-heif resets the EXIF
     orientation, so nothing is left for a viewer to rotate. An HDR photo gives its SDR base image: pillow-heif
     brings 10 and 12 bits down to 8 and ignores the auxiliary images, the Apple gain map among them.
+    A file libheif can't decode (truncated, for instance) is `input_corrupt`.
     """
-    image = pillow_heif.open_heif(input_path).to_pillow()
+    try:
+        image = decode_image(input_path, detected_format)
+    except CorruptImageError as e:
+        raise corrupt_input_error(detected_format, str(e)) from e
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")  # JPEG has no alpha
     buffer = io.BytesIO()
@@ -37,9 +46,10 @@ def heic_to_jpeg(input_path: Path) -> tuple[bytes, int, int]:
 def write_preview(input_file: str, output: str, overwrite: bool) -> dict[str, Any]:
     """Write the JPEG preview of a HEIC or HEIF and return the `result` object of the JSON contract."""
     input_path = validate_input_file(input_file)
-    check_format(detect_file_format(input_path), PREVIEWABLE_FORMATS)
+    detected_format = detect_file_format(input_path)
+    check_format(detected_format, PREVIEWABLE_FORMATS)
     output_path = Path(output)
     check_output(output_path, overwrite)
-    jpeg, width, height = heic_to_jpeg(input_path)
+    jpeg, width, height = heic_to_jpeg(input_path, detected_format)
     write_atomically(output_path, jpeg, lambda _: None)  # nothing to finalize: the JPEG is complete
     return {"input": input_file, "output": output, "width": width, "height": height, "size_bytes": len(jpeg)}

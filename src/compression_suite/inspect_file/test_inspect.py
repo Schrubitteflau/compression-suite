@@ -10,6 +10,7 @@ from click.testing import Result
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.utils.pinned_tools import load_manifest
 
 runner = CliRunner()
 
@@ -19,6 +20,8 @@ S23_MOTION_PHOTO = SAMPLES / "s23_motion_photo.jpg"
 SAMSUNG_MOTION_PHOTO = SAMPLES / "samsung_motion_photo.jpg"
 SCREENSHOT = SAMPLES / "screenshot.png"
 ORIENTED_P3_HEIC = SAMPLES / "oriented_p3.heic"
+
+EXIFTOOL_VERSION = load_manifest()["exiftool"].version
 
 IMPORTANT_KEYS = ["capture_date", "gps", "camera", "dimensions", "orientation", "color_profile", "transparency"]
 
@@ -72,6 +75,7 @@ def test_s23_photo_is_described(tmp_path: Path):
     assert result["mtime"] == MTIME_ISO
     assert result["compressible"] is True
     assert result["motion_photo"] == {"detected": False, "signals": []}
+    assert result["corrupt"] == {"detected": False, "reason": None}
 
 
 def test_s23_photo_important_fields_have_a_value_and_a_source(tmp_path: Path):
@@ -170,6 +174,48 @@ def test_unknown_format_is_a_success(tmp_path: Path):
     assert not any(tag.startswith("ExifTool:") for tag in result["metadata"])
 
 
+def test_unknown_format_is_not_corrupt(tmp_path: Path):
+    assert _inspect(_write(tmp_path, "blob.dat", bytes(range(256)) * 4))["corrupt"] == {
+        "detected": False,
+        "reason": None,
+    }
+
+
+def test_heic_is_not_corrupt(tmp_path: Path):
+    assert _inspect(_copy(ORIENTED_P3_HEIC, tmp_path))["corrupt"] == {"detected": False, "reason": None}
+
+
+# --- Corrupt files --------------------------------------------------------------
+
+
+def _truncate(src: Path, tmp_path: Path, name: str) -> Path:
+    """A sample cut short, as by an interrupted synchronisation."""
+    data = src.read_bytes()
+    return _write(tmp_path, name, data[: int(len(data) * 0.9)])
+
+
+@pytest.mark.parametrize(
+    ("sample", "fmt", "decoder_message"),
+    [
+        (S23_PHOTO, "jpeg", "image file is truncated"),
+        (ORIENTED_P3_HEIC, "heic", "references data outside of file bounds"),
+    ],
+)
+def test_truncated_file_is_described_and_flagged_corrupt(tmp_path: Path, sample: Path, fmt: str, decoder_message: str):
+    path = _truncate(sample, tmp_path, f"truncated.{fmt}")
+    result = _inspect(path)
+    assert result["format"] == fmt
+    assert result["size_bytes"] == path.stat().st_size
+    assert result["mtime"] == MTIME_ISO
+    assert result["corrupt"]["detected"] is True
+    assert decoder_message in result["corrupt"]["reason"]
+    assert result["metadata"]  # exiftool still reads what it can
+
+
+def test_pdf_is_not_checked_for_corruption(tmp_path: Path):
+    assert _inspect(_write(tmp_path, "doc.pdf", b"%PDF-1.4\n"))["corrupt"] == {"detected": False, "reason": None}
+
+
 def test_empty_file_is_a_success(tmp_path: Path):
     result = _inspect(_write(tmp_path, "empty", b""))
     assert result["format"] == "unknown"
@@ -208,6 +254,20 @@ def test_missing_exiftool_is_tool_missing(monkeypatch: pytest.MonkeyPatch, tmp_p
     error = json.loads(result.stdout)["error"]
     assert error["code"] == "tool_missing"
     assert error["details"]["install_command"] == "just install-tools"
+
+
+def test_crashing_exiftool_is_internal_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    exiftool = tmp_path / "tools" / f"exiftool-{EXIFTOOL_VERSION}" / "exiftool"
+    exiftool.parent.mkdir(parents=True)
+    # The right version, but it dies on any file without writing anything
+    exiftool.write_text(f'#!/bin/sh\n[ "$1" = -ver ] && echo {EXIFTOOL_VERSION} && exit 0\necho boom >&2\nexit 1\n')
+    exiftool.chmod(0o755)
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tmp_path / "tools"))
+    result = _invoke(_copy(S23_PHOTO, tmp_path))
+    assert result.exit_code == 50, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "internal_error"
+    assert "boom" in error["message"]
 
 
 def test_missing_file_argument_is_a_json_usage_error():
@@ -253,6 +313,12 @@ def test_without_json_names_the_motion_photo_signals(tmp_path: Path):
     result = runner.invoke(app, ["inspect", str(_copy(SAMSUNG_MOTION_PHOTO, tmp_path))])
     assert result.exit_code == 0, result.output
     assert "samsung_motion_photo_data" in result.stdout
+
+
+def test_without_json_flags_a_corrupt_file(tmp_path: Path):
+    result = runner.invoke(app, ["inspect", str(_truncate(S23_PHOTO, tmp_path, "truncated.jpg"))])
+    assert result.exit_code == 0, result.output
+    assert "Corrupt: yes (image file is truncated" in result.stdout
 
 
 def test_without_json_errors_go_to_stderr(tmp_path: Path):

@@ -19,7 +19,6 @@ runner = CliRunner()
 
 EXIFTOOL_VERSION = load_manifest()["exiftool"].version
 
-FTYP_AVIF = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf"
 FTYP_HEIC = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"
 
 
@@ -121,7 +120,7 @@ def test_format_is_detected_on_content_not_extension(tmp_path: Path):
     ("data", "expected"),
     [
         (_image_bytes("WEBP"), "webp"),
-        (FTYP_AVIF, "avif"),
+        (_image_bytes("AVIF"), "avif"),
     ],
 )
 def test_other_supported_formats(tmp_path: Path, data: bytes, expected: str):
@@ -316,6 +315,71 @@ def test_pinned_exiftool_with_wrong_version_gives_tool_missing(tmp_path: Path, m
     error = _assert_error(result, "tool_missing", 30)
     assert error["details"]["tool"] == "exiftool"
     assert "11.88" in error["message"]
+    _assert_tinify_not_called(fake)
+
+
+def _truncated(fmt: str) -> bytes:
+    """A Pillow image of a known format, cut in half as by an interrupted synchronisation."""
+    data = _image_bytes(fmt, size=(128, 96))
+    return data[: len(data) // 2]
+
+
+@pytest.mark.parametrize(("fmt", "detected"), [("JPEG", "jpeg"), ("PNG", "png"), ("WEBP", "webp"), ("AVIF", "avif")])
+def test_truncated_input_is_input_corrupt_before_tinify(tmp_path: Path, fmt: str, detected: str):
+    src = tmp_path / "photo.bin"
+    src.write_bytes(_truncated(fmt))
+    out = tmp_path / "out.bin"
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(out), "--json")
+    error = _assert_error(result, "input_corrupt", 27)
+    assert error["details"] == {"detected_format": detected}
+    _assert_tinify_not_called(fake)
+    assert not out.exists()
+
+
+def test_truncated_jpeg_message_is_the_decoder_one(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_truncated("JPEG"))
+    with _fake_tinify():
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    assert "truncated" in _assert_error(result, "input_corrupt", 27)["message"].lower()  # Pillow's own message
+
+
+def test_jpeg_header_alone_is_input_corrupt(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(b"\xff\xd8\xff")  # exiftool still describes it, with a warning
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    _assert_error(result, "input_corrupt", 27)
+    _assert_tinify_not_called(fake)
+
+
+def test_truncated_input_from_stdin_is_input_corrupt(tmp_path: Path):
+    with _fake_tinify() as fake:
+        result = _invoke("--output", str(tmp_path / "out.jpg"), "--json", input=_truncated("JPEG"))
+    error = _assert_error(result, "input_corrupt", 27)
+    assert error["details"] == {"detected_format": "jpeg"}
+    _assert_tinify_not_called(fake)
+
+
+def test_crashing_exiftool_gives_internal_error_before_tinify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    tools_dir = tmp_path / "tools"
+    fake_dir = tools_dir / f"exiftool-{EXIFTOOL_VERSION}"
+    fake_dir.mkdir(parents=True)
+    fake_exiftool = fake_dir / "exiftool"
+    # The right version, but it dies on any file without writing anything
+    fake_exiftool.write_text(
+        f'#!/bin/sh\n[ "$1" = -ver ] && echo {EXIFTOOL_VERSION} && exit 0\necho boom >&2\nexit 1\n'
+    )
+    fake_exiftool.chmod(0o755)
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tools_dir))
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    error = _assert_error(result, "internal_error", 50)
+    assert "exiftool" in error["message"]
+    assert "boom" in error["message"]
     _assert_tinify_not_called(fake)
 
 

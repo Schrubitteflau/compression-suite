@@ -17,6 +17,7 @@ from tinify import ConnectionError as TinifyConnectionError
 
 from compression_suite.utils.config import resolve_api_key
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.decoding import corruption_reason
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
 from compression_suite.utils.metadata_diff import (
     REENCODING_REASON,
@@ -145,6 +146,22 @@ def check_format(detected_format: str, supported_formats: tuple[str, ...] = SUPP
             f"Unsupported format: {detected_format} (supported: {', '.join(supported_formats)})",
             {"detected_format": detected_format},
         )
+
+
+def corrupt_input_error(detected_format: str, reason: str) -> CommandError:
+    """The error of a file whose format is recognised but that its decoder can't read to the end."""
+    return CommandError(
+        ErrorCode.INPUT_CORRUPT,
+        f"Damaged {detected_format} file, it can't be decoded: {reason}",
+        {"detected_format": detected_format},
+    )
+
+
+def check_decodable(source: Path | bytes, detected_format: str) -> None:
+    """Reject a damaged input (truncated, for instance): Tinify would fail on it, or compress a broken image."""
+    reason = corruption_reason(source, detected_format)
+    if reason is not None:
+        raise corrupt_input_error(detected_format, reason)
 
 
 def check_output(output_path: Path, overwrite: bool) -> None:
@@ -306,6 +323,7 @@ def compress_image(
         input_size = original_stat.st_size
         check_size(input_size, disable_hard_limit)
         original_buffer = original_path.read_bytes()
+        check_decodable(original_path, input_format)
 
         def prepare_source() -> tinify.Source:
             return tinify.from_file(str(original_path))
@@ -316,6 +334,7 @@ def compress_image(
         check_format(input_format)
         input_size = len(original_buffer)
         check_size(input_size, disable_hard_limit)
+        check_decodable(original_buffer, input_format)
 
         def prepare_source() -> tinify.Source:
             return tinify.from_buffer(original_buffer)

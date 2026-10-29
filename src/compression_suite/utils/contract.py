@@ -36,6 +36,7 @@ class ErrorCode(str, Enum):
     FILE_TOO_LARGE = "file_too_large"
     INPUT_NOT_FOUND = "input_not_found"
     INPUT_UNREADABLE = "input_unreadable"
+    INPUT_CORRUPT = "input_corrupt"
     OUTPUT_EXISTS = "output_exists"
     METADATA_COPY_FAILED = "metadata_copy_failed"
     TOOL_MISSING = "tool_missing"
@@ -59,6 +60,7 @@ EXIT_CODES: dict[ErrorCode, int] = {
     ErrorCode.FILE_TOO_LARGE: 22,
     ErrorCode.INPUT_NOT_FOUND: 23,
     ErrorCode.INPUT_UNREADABLE: 26,
+    ErrorCode.INPUT_CORRUPT: 27,
     ErrorCode.OUTPUT_EXISTS: 24,
     ErrorCode.METADATA_COPY_FAILED: 25,
     ErrorCode.TOOL_MISSING: 30,

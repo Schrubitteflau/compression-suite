@@ -174,6 +174,22 @@ def test_missing_input_is_input_not_found(tmp_path: Path):
     _assert_error(_invoke(tmp_path / "missing.heic", tmp_path / "preview.jpg"), "input_not_found", 23)
 
 
+@pytest.mark.parametrize(
+    ("kept", "decoder_message"),
+    [(0.5, "Cannot read full meta box"), (0.9, "references data outside of file bounds")],
+)
+def test_truncated_heic_is_input_corrupt(tmp_path: Path, kept: float, decoder_message: str):
+    data = ORIENTED_P3_HEIC.read_bytes()
+    heic = tmp_path / "truncated.heic"
+    heic.write_bytes(data[: int(len(data) * kept)])
+    output = tmp_path / "preview.jpg"
+    error = _assert_error(_invoke(heic, output), "input_corrupt", 27)
+    assert error["details"] == {"detected_format": "heic"}
+    assert decoder_message in error["message"]
+    assert not output.exists()
+    assert [path.name for path in tmp_path.iterdir()] == ["truncated.heic"]  # no temporary file left either
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
 def test_unreadable_input_is_input_unreadable(tmp_path: Path):
     heic = _copy(ORIENTED_P3_HEIC, tmp_path)
