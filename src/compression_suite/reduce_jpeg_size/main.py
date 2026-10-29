@@ -51,9 +51,7 @@ def reduce_size(
     if output is not None:
         output_path = Path(output)
         if output_path.exists() and not overwrite:
-            raise FileExistsError(
-                f"Output file already exists: {output}. Use --overwrite to replace."
-            )
+            raise FileExistsError(f"Output file already exists: {output}. Use --overwrite to replace.")
 
     max_size_bytes = max_size * 1024
 
@@ -64,7 +62,9 @@ def reduce_size(
         # First pass: target size directly
         subprocess.run(
             ["jpegoptim", f"--size={max_size}", str(working_file)],
-            capture_output=True, timeout=60, check=False,
+            capture_output=True,
+            timeout=60,
+            check=False,
         )
 
         iterations = 1
@@ -79,7 +79,9 @@ def reduce_size(
             target_pct = 100 - reduction_pct
             subprocess.run(
                 ["jpegoptim", f"--size={target_pct}%", str(working_file)],
-                capture_output=True, timeout=60, check=False,
+                capture_output=True,
+                timeout=60,
+                check=False,
             )
             current_size = working_file.stat().st_size
             iterations += 1
@@ -88,12 +90,16 @@ def reduce_size(
                 # Progress made — reset to gentle 1% for next iteration
                 reduction_pct = 1
                 if verbose:
-                    console.print(f"[dim]Iteration {iterations}: {current_size:,} bytes (−{reduction_pct}% worked, resetting)[/dim]")
+                    console.print(
+                        f"[dim]Iteration {iterations}: {current_size:,} bytes (−{reduction_pct}% worked, resetting)[/dim]"
+                    )
             else:
                 # No progress — escalate reduction percentage
                 reduction_pct += 1
                 if verbose:
-                    console.print(f"[dim]Iteration {iterations}: no progress at {target_pct}%, escalating to {100 - reduction_pct}%[/dim]")
+                    console.print(
+                        f"[dim]Iteration {iterations}: no progress at {target_pct}%, escalating to {100 - reduction_pct}%[/dim]"
+                    )
                 if reduction_pct > 50:
                     if verbose:
                         console.print("[dim]Escalation limit reached (50%), stopping.[/dim]")

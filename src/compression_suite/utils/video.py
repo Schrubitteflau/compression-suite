@@ -3,7 +3,7 @@ import sys
 from typing import Any
 
 import ffmpeg
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -22,24 +22,24 @@ class VideoInfo(BaseModel):
 def get_video_info(filename: str) -> VideoInfo:
     try:
         # Use ffmpeg.probe to get video information
-        probe = ffmpeg.probe(filename, select_streams='v:0')
-        stream: Any = probe['streams'][0]
+        probe = ffmpeg.probe(filename, select_streams="v:0")
+        stream: Any = probe["streams"][0]
 
         # Parse frame rate
-        fps_str = stream['r_frame_rate']
-        if isinstance(fps_str, str) and '/' in fps_str:
-            num, denom = map(int, fps_str.split('/'))
+        fps_str = stream["r_frame_rate"]
+        if isinstance(fps_str, str) and "/" in fps_str:
+            num, denom = map(int, fps_str.split("/"))
             fps_value = num / denom
         else:
             fps_value = float(fps_str)
 
         video_info = VideoInfo(
-            width=stream['width'],
-            height=stream['height'],
-            pix_fmt=stream['pix_fmt'],
+            width=stream["width"],
+            height=stream["height"],
+            pix_fmt=stream["pix_fmt"],
             fps=fps_value,
-            duration=float(stream['duration']),
-            frame_count=int(stream['nb_frames']),
+            duration=float(stream["duration"]),
+            frame_count=int(stream["nb_frames"]),
         )
 
         duration_str = f", {video_info.duration:.2f}s" if video_info.duration > 0 else ""

@@ -65,7 +65,8 @@ def _compress(tmp_path: Path, *args: str, error: BaseException | None = None) ->
     src = _jpeg(tmp_path)
     with _fake_tinify(src.read_bytes(), error) as fake:
         result = runner.invoke(
-            app, ["compress-image", str(src), "--output", str(tmp_path / "out.jpg"), "--json", *args],
+            app,
+            ["compress-image", str(src), "--output", str(tmp_path / "out.jpg"), "--json", *args],
         )
     return result, fake
 
@@ -96,7 +97,8 @@ def test_configuration_folder_defaults_to_home_config(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.parametrize(
-    "content", [None, "", 'other = "x"\n', 'tinify_api_key = ""\n', 'tinify_api_key = "  "\n', "tinify_api_key = 42\n"],
+    "content",
+    [None, "", 'other = "x"\n', 'tinify_api_key = ""\n', 'tinify_api_key = "  "\n', "tinify_api_key = 42\n"],
 )
 def test_no_key_is_api_key_missing_before_tinify(config_home: Path, tmp_path: Path, content: str | None):
     if content is not None:

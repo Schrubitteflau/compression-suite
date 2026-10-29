@@ -18,6 +18,7 @@ def cli_error_handler(func: Callable) -> Callable:
     Module-specific exceptions should be caught inside the wrapped function
     before they bubble up to this handler.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:

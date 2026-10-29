@@ -41,11 +41,30 @@ STRIP_REASON = "métadonnées retirées à la demande"
 # Tags of exiftool's Samsung::Trailer table, read in the SEFT trailer. Their group, `Samsung`, is also the one
 # of Samsung's EXIF maker notes, which are copied back: `Samsung:*` would hide their loss.
 SAMSUNG_TRAILER_TAGS = (
-    "DepthMapData", "DepthMapData2", "DepthMapName", "DualCameraImage", "DualCameraImageName", "EmbeddedAudioFile",
-    "EmbeddedAudioFileName", "EmbeddedImage", "EmbeddedImage2", "EmbeddedImageName", "EmbeddedVideoFile",
-    "EmbeddedVideoOffsetSize", "EmbeddedVideoType", "MCCData", "MotionPhotoAutoPlayVideo", "OriginalPathHashKey",
-    "RemasterInfo", "SamsungCaptureInfo", "SamsungMotionPhotoVersion", "SingleShotDepthMap", "SurroundShotVideo",
-    "SurroundShotVideoName", "TimeStamp", "VideoEditedTimeZone",
+    "DepthMapData",
+    "DepthMapData2",
+    "DepthMapName",
+    "DualCameraImage",
+    "DualCameraImageName",
+    "EmbeddedAudioFile",
+    "EmbeddedAudioFileName",
+    "EmbeddedImage",
+    "EmbeddedImage2",
+    "EmbeddedImageName",
+    "EmbeddedVideoFile",
+    "EmbeddedVideoOffsetSize",
+    "EmbeddedVideoType",
+    "MCCData",
+    "MotionPhotoAutoPlayVideo",
+    "OriginalPathHashKey",
+    "RemasterInfo",
+    "SamsungCaptureInfo",
+    "SamsungMotionPhotoVersion",
+    "SingleShotDepthMap",
+    "SurroundShotVideo",
+    "SurroundShotVideoName",
+    "TimeStamp",
+    "VideoEditedTimeZone",
 )
 
 # Losses decided by compression-suite, shown with their reason in the metadata diff. Those with an
@@ -92,9 +111,7 @@ MOTION_PHOTO_LOSSES = [
     ExpectedLoss("Samsung:EmbeddedVideo*", MOTION_PHOTO_REASON),
 ]
 
-EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [
-    f"-{loss.excluded_tag}=" for loss in MOTION_PHOTO_LOSSES if loss.excluded_tag
-]
+EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in MOTION_PHOTO_LOSSES if loss.excluded_tag]
 
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
 # "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost). Without XMPToolkit,
@@ -172,7 +189,8 @@ def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path
     """Copy metadata from original to compressed file using exiftool, excluding problematic tags and extra ones."""
     cmd = [
         str(exiftool),
-        "-TagsFromFile", str(original_path),
+        "-TagsFromFile",
+        str(original_path),
         "-all:all",
         *EXIFTOOL_EXTRA_TAGS,
         *EXIFTOOL_EXCLUDE_TAGS,
@@ -299,7 +317,8 @@ def compress_image(
             raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output}.")
         if output_path is not None and output_path.exists() and not overwrite:
             raise CommandError(
-                ErrorCode.OUTPUT_EXISTS, f"Output file already exists: {output}. Use --overwrite to replace.",
+                ErrorCode.OUTPUT_EXISTS,
+                f"Output file already exists: {output}. Use --overwrite to replace.",
             )
 
         tinify.key = resolve_api_key(api_key)
@@ -323,7 +342,9 @@ def compress_image(
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
             final_buffer, final_tags, final_transparency = write_atomically(
-                output_path, compressed_buffer, apply_metadata_and_dates,
+                output_path,
+                compressed_buffer,
+                apply_metadata_and_dates,
             )
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,7 +368,9 @@ def compress_image(
 
     # Report on stderr
     ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
-    console.print(f"[bold green]Compressed:[/bold green] {input_size:,} → {output_size:,} bytes ({ratio:.1f}% reduction)")
+    console.print(
+        f"[bold green]Compressed:[/bold green] {input_size:,} → {output_size:,} bytes ({ratio:.1f}% reduction)"
+    )
     console.print(f"[dim]API compressions used this month: {compression_count}[/dim]")
     if metadata_diff["unexpected_losses"]:
         lost = ", ".join(loss["tag"] for loss in metadata_diff["unexpected_losses"])
@@ -384,5 +407,12 @@ def main(
 ) -> dict[str, Any]:
     """Entry point called from cli.py."""
     return compress_image(
-        input_file, output, api_key, metadata, overwrite, disable_hard_limit, allow_motion_photo_loss, verbose,
+        input_file,
+        output,
+        api_key,
+        metadata,
+        overwrite,
+        disable_hard_limit,
+        allow_motion_photo_loss,
+        verbose,
     )

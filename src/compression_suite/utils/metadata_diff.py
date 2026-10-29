@@ -115,10 +115,7 @@ IMPORTANT_FIELDS = (
     ),
     ImportantField(
         "dimensions",
-        tuple(
-            {"width": f"{group}:ImageWidth", "height": f"{group}:ImageHeight"}
-            for group in DIMENSION_GROUPS
-        ),
+        tuple({"width": f"{group}:ImageWidth", "height": f"{group}:ImageHeight"} for group in DIMENSION_GROUPS),
     ),
     ImportantField("orientation", ("IFD0:Orientation", "XMP-tiff:Orientation")),
     ImportantField("color_profile", ("ICC_Profile:ProfileDescription",)),
@@ -132,16 +129,17 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     no output at all means exiftool itself failed, which is an error rather than a file without tags.
     """
     result = subprocess.run(
-        [str(exiftool), "-j", "-G1", "-a", str(path)], capture_output=True, text=True, timeout=30,
+        [str(exiftool), "-j", "-G1", "-a", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     try:
         [tags] = json.loads(result.stdout)
     except ValueError as e:
         raise RuntimeError(f"exiftool could not read {path}: {result.stderr.strip()}") from e
     return {
-        tag: value
-        for tag, value in tags.items()
-        if tag != "SourceFile" and tag.split(":", 1)[0] not in IGNORED_GROUPS
+        tag: value for tag, value in tags.items() if tag != "SourceFile" and tag.split(":", 1)[0] not in IGNORED_GROUPS
     }
 
 
@@ -221,7 +219,6 @@ def important_values(tags: dict[str, Any], mtime: str | None, transparency: bool
     return fields
 
 
-
 def _status(before: Any, after: Any) -> str:
     """`absent` on both sides, `same`, `lost` after, or `changed` (including a value that appears)."""
     if before is None and after is None:
@@ -247,13 +244,15 @@ def _important_fields(
         source = before_source or after_source
         if source is None and field.mtime_fallback and mtimes is not None:
             (before_value, after_value), source = mtimes, MTIME_SOURCE
-        fields.append({
-            "key": field.key,
-            "before": before_value,
-            "after": after_value,
-            "source": source,
-            "status": _status(before_value, after_value),
-        })
+        fields.append(
+            {
+                "key": field.key,
+                "before": before_value,
+                "after": after_value,
+                "source": source,
+                "status": _status(before_value, after_value),
+            }
+        )
     fields.append(_transparency_field(transparency))
     return fields
 

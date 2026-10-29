@@ -79,7 +79,9 @@ def test_s23_photo_important_fields_have_a_value_and_a_source(tmp_path: Path):
     assert all(set(field) == {"key", "value", "source"} for field in result["important"])
     important = _important(result)
     assert important["capture_date"] == {
-        "key": "capture_date", "value": "2024:06:15 12:00:00", "source": "ExifIFD:DateTimeOriginal",
+        "key": "capture_date",
+        "value": "2024:06:15 12:00:00",
+        "source": "ExifIFD:DateTimeOriginal",
     }
     assert important["camera"]["value"]["make"] == "samsung"
     assert important["gps"]["source"] == "GPS:GPSLatitude"

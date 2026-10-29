@@ -1,7 +1,7 @@
 """CLI command for compress-image."""
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -11,24 +11,29 @@ from compression_suite.utils.contract import CommandError, ErrorCode, run_comman
 
 class MetadataMode(str, Enum):
     """Metadata handling mode for image compression."""
+
     KEEP = "keep"
     STRIP = "strip"
 
 
 def compress_image(
-    input_file: Optional[str] = typer.Argument(None, help="Path to input image file (omit to read from stdin)"),
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="Path to output file (omit to write to stdout)"),
-    api_key: Optional[str] = typer.Option(
+    input_file: str | None = typer.Argument(None, help="Path to input image file (omit to read from stdin)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Path to output file (omit to write to stdout)"),
+    api_key: str | None = typer.Option(
         None,
         "--api-key",
         help="Tinify API key (default: tinify_api_key in $XDG_CONFIG_HOME/compression-suite/config.toml, "
         "~/.config by default)",
     ),
-    metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
+    metadata: MetadataMode = typer.Option(
+        MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),
     disable_hard_limit: bool = typer.Option(False, "--disable-hard-limit", help="Bypass the 15MB input size limit"),
     allow_motion_photo_loss: bool = typer.Option(
-        False, "--allow-motion-photo-loss", help="Compress a motion photo anyway, losing its video",
+        False,
+        "--allow-motion-photo-loss",
+        help="Compress a motion photo anyway, losing its video",
     ),
     json_mode: bool = typer.Option(False, "--json", help="Write a single JSON document on stdout (requires --output)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
@@ -39,11 +44,13 @@ def compress_image(
     Supports JPEG, PNG, WebP, and AVIF. Reads from a file or stdin,
     writes to a file or stdout. Metadata is preserved by default using exiftool.
     """
+
     def body() -> dict[str, Any]:
         """Run the compression and return the `result` object of the JSON contract."""
         if json_mode and output is None:
             raise CommandError(
-                ErrorCode.USAGE_ERROR, "--json requires --output: stdout is reserved for the JSON document",
+                ErrorCode.USAGE_ERROR,
+                "--json requires --output: stdout is reserved for the JSON document",
             )
         return main(
             input_file=input_file,

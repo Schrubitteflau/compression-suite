@@ -70,12 +70,18 @@ def _fake_tinify(resize: float = 1.0, drop_alpha: bool = False, output: bytes | 
 
 
 def _compress(
-    src: Path, out: Path, *args: str, resize: float = 1.0, drop_alpha: bool = False, output: bytes | None = None,
+    src: Path,
+    out: Path,
+    *args: str,
+    resize: float = 1.0,
+    drop_alpha: bool = False,
+    output: bytes | None = None,
 ) -> dict:
     """Run compress-image --json and return the metadata diff."""
     with _fake_tinify(resize, drop_alpha, output):
         result = runner.invoke(
-            app, ["compress-image", str(src), "--output", str(out), "--api-key", "test-key", "--json", *args],
+            app,
+            ["compress-image", str(src), "--output", str(out), "--api-key", "test-key", "--json", *args],
         )
     assert result.exit_code == 0, result.output
     return json.loads(result.stdout)["result"]["metadata"]
@@ -113,7 +119,13 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
     metadata = _compress(S23_PHOTO, tmp_path / "out.jpg")
 
     assert [field["key"] for field in metadata["important"]] == [
-        "capture_date", "gps", "camera", "dimensions", "orientation", "color_profile", "transparency",
+        "capture_date",
+        "gps",
+        "camera",
+        "dimensions",
+        "orientation",
+        "color_profile",
+        "transparency",
     ]
     gps = {
         "latitude": "12 deg 20' 44.16\"",
@@ -125,25 +137,39 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
     }
     assert _important(metadata) == {
         "capture_date": {
-            "key": "capture_date", "before": "2024:06:15 12:00:00", "after": "2024:06:15 12:00:00",
-            "source": "ExifIFD:DateTimeOriginal", "status": "same",
+            "key": "capture_date",
+            "before": "2024:06:15 12:00:00",
+            "after": "2024:06:15 12:00:00",
+            "source": "ExifIFD:DateTimeOriginal",
+            "status": "same",
         },
         "gps": {"key": "gps", "before": gps, "after": gps, "source": "GPS:GPSLatitude", "status": "same"},
         "camera": {
-            "key": "camera", "before": {"make": "samsung", "model": "Galaxy S23"},
-            "after": {"make": "samsung", "model": "Galaxy S23"}, "source": "IFD0:Make", "status": "same",
+            "key": "camera",
+            "before": {"make": "samsung", "model": "Galaxy S23"},
+            "after": {"make": "samsung", "model": "Galaxy S23"},
+            "source": "IFD0:Make",
+            "status": "same",
         },
         "dimensions": {
-            "key": "dimensions", "before": {"width": 4000, "height": 3000}, "after": {"width": 4000, "height": 3000},
-            "source": "File:ImageWidth", "status": "same",
+            "key": "dimensions",
+            "before": {"width": 4000, "height": 3000},
+            "after": {"width": 4000, "height": 3000},
+            "source": "File:ImageWidth",
+            "status": "same",
         },
         "orientation": {
-            "key": "orientation", "before": "Horizontal (normal)", "after": "Horizontal (normal)",
-            "source": "IFD0:Orientation", "status": "same",
+            "key": "orientation",
+            "before": "Horizontal (normal)",
+            "after": "Horizontal (normal)",
+            "source": "IFD0:Orientation",
+            "status": "same",
         },
         "color_profile": {
-            "key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer",
-            "after": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription",
+            "key": "color_profile",
+            "before": "DCI-P3 D65 Gamut with sRGB Transfer",
+            "after": "DCI-P3 D65 Gamut with sRGB Transfer",
+            "source": "ICC_Profile:ProfileDescription",
             "status": "same",
         },
         "transparency": {"key": "transparency", "before": False, "after": False, "source": "pixels", "status": "same"},
@@ -160,10 +186,14 @@ def test_s23_photo_has_no_unexpected_loss(tmp_path: Path):
 def test_s23_samsung_trailer_fields_are_expected_losses(tmp_path: Path):
     expected = _expected(_compress(S23_PHOTO, tmp_path / "out.jpg"))
     assert expected["Samsung:TimeStamp"] == {
-        "tag": "Samsung:TimeStamp", "before": "2024:06:15 12:00:00.918+02:00", "reason": SAMSUNG_TRAILER_REASON,
+        "tag": "Samsung:TimeStamp",
+        "before": "2024:06:15 12:00:00.918+02:00",
+        "reason": SAMSUNG_TRAILER_REASON,
     }
     assert expected["Samsung:MCCData"] == {
-        "tag": "Samsung:MCCData", "before": "France (208)", "reason": SAMSUNG_TRAILER_REASON,
+        "tag": "Samsung:MCCData",
+        "before": "France (208)",
+        "reason": SAMSUNG_TRAILER_REASON,
     }
 
 
@@ -177,7 +207,9 @@ def test_exif_thumbnail_is_an_expected_loss(tmp_path: Path):
 def test_file_group_encoding_changes_are_reencoding_losses(tmp_path: Path):
     expected = _expected(_compress(S23_PHOTO, tmp_path / "out.jpg"))
     assert expected["File:EncodingProcess"] == {
-        "tag": "File:EncodingProcess", "before": "Baseline DCT, Huffman coding", "reason": REENCODING_REASON,
+        "tag": "File:EncodingProcess",
+        "before": "Baseline DCT, Huffman coding",
+        "reason": REENCODING_REASON,
     }
 
 
@@ -277,8 +309,10 @@ def test_icc_profile_exiftool_cannot_write_back_is_an_unexpected_removal(tmp_pat
     Image.open(SCREENSHOT).convert("RGB").save(src, format="AVIF", icc_profile=icc_profile)
     metadata = _compress(src, tmp_path / "out.avif")
     assert {
-        "tag": "ICC_Profile:ProfileDescription", "kind": "removed",
-        "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": None,
+        "tag": "ICC_Profile:ProfileDescription",
+        "kind": "removed",
+        "before": "DCI-P3 D65 Gamut with sRGB Transfer",
+        "after": None,
     } in metadata["unexpected_losses"]
     assert _important(metadata)["color_profile"]["status"] == "lost"
 
@@ -291,10 +325,16 @@ def test_opaque_alpha_channel_dropped_from_a_gnome_capture_is_reencoding(tmp_pat
     metadata = _compress(_screenshot(tmp_path), tmp_path / "out.png")
     assert metadata["unexpected_losses"] == []
     assert _expected(metadata)["PNG:ColorType"] == {
-        "tag": "PNG:ColorType", "before": "RGB with Alpha", "reason": REENCODING_REASON,
+        "tag": "PNG:ColorType",
+        "before": "RGB with Alpha",
+        "reason": REENCODING_REASON,
     }
     assert _important(metadata)["transparency"] == {
-        "key": "transparency", "before": False, "after": False, "source": "pixels", "status": "same",
+        "key": "transparency",
+        "before": False,
+        "after": False,
+        "source": "pixels",
+        "status": "same",
     }
 
 
@@ -303,7 +343,11 @@ def test_transparency_kept_in_a_palette_is_reencoding(tmp_path: Path):
     assert metadata["unexpected_losses"] == []
     assert _expected(metadata)["PNG:ColorType"]["reason"] == REENCODING_REASON
     assert _important(metadata)["transparency"] == {
-        "key": "transparency", "before": True, "after": True, "source": "pixels", "status": "same",
+        "key": "transparency",
+        "before": True,
+        "after": True,
+        "source": "pixels",
+        "status": "same",
     }
 
 
@@ -316,8 +360,10 @@ def test_transparency_kept_in_a_palette_is_reencoding(tmp_path: Path):
         (
             "AVIF",
             {
-                "tag": "QuickTime:AuxiliaryImageType", "kind": "removed",
-                "before": "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha", "after": None,
+                "tag": "QuickTime:AuxiliaryImageType",
+                "kind": "removed",
+                "before": "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha",
+                "after": None,
             },
         ),
     ],
@@ -326,7 +372,11 @@ def test_lost_transparency_is_never_expected(tmp_path: Path, mode: str, fmt: str
     src = _transparent_image(tmp_path, fmt)
     metadata = _compress(src, tmp_path / f"out.{fmt.lower()}", "--metadata", mode, drop_alpha=True)
     assert _important(metadata)["transparency"] == {
-        "key": "transparency", "before": True, "after": False, "source": "pixels", "status": "lost",
+        "key": "transparency",
+        "before": True,
+        "after": False,
+        "source": "pixels",
+        "status": "lost",
     }
     assert alpha_loss in metadata["unexpected_losses"]
     assert {"tag": "pixels:transparency", "kind": "removed", "before": True, "after": False} in metadata[
@@ -339,12 +389,19 @@ def test_transparency_is_unverified_when_the_output_cannot_be_decoded(tmp_path: 
     corrupt_png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
     metadata = _compress(_transparent_image(tmp_path), tmp_path / "out.png", "--metadata", "strip", output=corrupt_png)
     assert _important(metadata)["transparency"] == {
-        "key": "transparency", "before": True, "after": None, "source": "pixels", "status": "unverified",
+        "key": "transparency",
+        "before": True,
+        "after": None,
+        "source": "pixels",
+        "status": "unverified",
     }
     assert "PNG:ColorType" not in _expected(metadata)
     assert "PNG:ColorType" in {loss["tag"] for loss in metadata["unexpected_losses"]}
     assert {
-        "tag": "pixels:transparency", "kind": "unverified", "before": True, "after": None,
+        "tag": "pixels:transparency",
+        "kind": "unverified",
+        "before": True,
+        "after": None,
     } in metadata["unexpected_losses"]
 
 

@@ -37,7 +37,11 @@ def check_jpegoptim(
     """
     try:
         result = subprocess.run(
-            ["jpegoptim", "--version"], capture_output=True, text=True, timeout=5, check=False,
+            ["jpegoptim", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
     except FileNotFoundError:
         raise RuntimeError("Required tool not found: jpegoptim")
@@ -56,4 +60,3 @@ def check_jpegoptim(
         )
 
     return version_str
-

@@ -51,6 +51,7 @@ def inspect(
 
     Never contacts Tinify and needs no API key. An unknown format is not an error.
     """
+
     def body() -> dict[str, Any]:
         """Describe the file and return the `result` object of the JSON contract."""
         result = inspect_file(input_file)

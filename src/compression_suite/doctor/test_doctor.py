@@ -79,7 +79,9 @@ def test_nominal_run_reports_the_pinned_exiftool(config_home: Path):
 
 
 def test_missing_pinned_tool_fails_with_the_report(
-    config_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    config_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tmp_path / "tools"))
     result = _invoke("--json")
@@ -100,7 +102,9 @@ def test_missing_pinned_tool_fails_with_the_report(
 
 
 def test_pinned_tool_of_another_version_is_a_version_mismatch(
-    config_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    config_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     _fake_exiftool(tmp_path / "tools", "1.0")
     monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tmp_path / "tools"))
@@ -176,7 +180,10 @@ def test_present_key_is_reported_but_never_shown(config_home: Path):
         assert KEY not in result.stdout
         assert KEY not in result.stderr
     assert _report(json_run)["tinify_api_key"] == {
-        "configured": True, "source": "config_file", "config_path": str(path), "permissions_ok": True,
+        "configured": True,
+        "source": "config_file",
+        "config_path": str(path),
+        "permissions_ok": True,
     }
 
 

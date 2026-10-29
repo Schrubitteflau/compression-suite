@@ -38,7 +38,9 @@ def _fake_tool(archive: Path, sha256: str) -> PinnedTool:
 
 def test_manifest_pins_exiftool_to_a_versioned_sourceforge_archive():
     exiftool = load_manifest()["exiftool"]
-    assert exiftool.url == f"https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-{exiftool.version}.tar.gz"
+    assert (
+        exiftool.url == f"https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-{exiftool.version}.tar.gz"
+    )
     assert len(exiftool.sha256) == 64
 
 

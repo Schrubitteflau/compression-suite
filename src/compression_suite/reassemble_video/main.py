@@ -7,12 +7,12 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Literal
+from typing import Literal
 
 import ffmpeg
 from PIL import Image
 from rich.console import Console
-from rich.progress import Progress, TimeElapsedColumn, BarColumn, TextColumn
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from compression_suite.models.metadata import Metadata, TimestampInfo
 
@@ -28,13 +28,13 @@ def load_metadata(folder_path: Path) -> Metadata:
     if not metadata_path.exists():
         raise FileNotFoundError(f"metadata.json not found in {folder_path}")
 
-    with open(metadata_path, 'r') as f:
+    with open(metadata_path) as f:
         data = f.read()
 
     return Metadata.model_validate_json(data)
 
 
-def load_frames_from_webp(webp_path: Path) -> List[Image.Image]:
+def load_frames_from_webp(webp_path: Path) -> list[Image.Image]:
     """Load all frames from a multi-frame WebP file."""
     frames = []
     img = Image.open(webp_path)
@@ -49,7 +49,7 @@ def load_frames_from_webp(webp_path: Path) -> List[Image.Image]:
     return frames
 
 
-def load_frames_from_pngs(folder_path: Path, metadata: Metadata) -> List[Image.Image]:
+def load_frames_from_pngs(folder_path: Path, metadata: Metadata) -> list[Image.Image]:
     """Load frames from individual PNG files based on metadata."""
     frames = []
 
@@ -74,17 +74,12 @@ def load_frames_from_pngs(folder_path: Path, metadata: Metadata) -> List[Image.I
 
 
 def prepare_frames_vfr(
-    temp_path: Path,
-    frames: List[Image.Image],
-    timestamps: List[TimestampInfo],
-    video_duration: float,
-    progress,
-    task
+    temp_path: Path, frames: list[Image.Image], timestamps: list[TimestampInfo], video_duration: float, progress, task
 ) -> Path:
     """Prepare frames for VFR mode using concat demuxer."""
     concat_file = temp_path / "concat.txt"
 
-    with open(concat_file, 'w') as f:
+    with open(concat_file, "w") as f:
         for i, ts_info in enumerate(timestamps):
             # Calculate duration (time until next frame, or end of video)
             if i < len(timestamps) - 1:
@@ -96,7 +91,7 @@ def prepare_frames_vfr(
             image_idx = ts_info.image_index
             frame = frames[image_idx]
             frame_path = temp_path / f"frame_{i:06d}.png"
-            frame.save(frame_path, format='PNG')
+            frame.save(frame_path, format="PNG")
 
             # Write to concat file
             f.write(f"file '{frame_path}'\n")
@@ -106,7 +101,7 @@ def prepare_frames_vfr(
 
         # Concat demuxer requires the last file to be listed again without duration
         if timestamps:
-            last_frame_path = temp_path / f"frame_{len(timestamps)-1:06d}.png"
+            last_frame_path = temp_path / f"frame_{len(timestamps) - 1:06d}.png"
             f.write(f"file '{last_frame_path}'\n")
 
     return concat_file
@@ -114,12 +109,12 @@ def prepare_frames_vfr(
 
 def prepare_frames_cfr(
     temp_path: Path,
-    frames: List[Image.Image],
-    timestamps: List[TimestampInfo],
+    frames: list[Image.Image],
+    timestamps: list[TimestampInfo],
     video_duration: float,
     fps: float,
     progress,
-    task
+    task,
 ) -> int:
     """Prepare frames for CFR mode using image2 demuxer with symlinks. Returns total frame count."""
     frame_counter = 0
@@ -140,7 +135,7 @@ def prepare_frames_cfr(
 
         # Save unique frame once, then create symlinks for duplicates
         unique_frame_path = temp_path / f"unique_{i:06d}.png"
-        frame.save(unique_frame_path, format='PNG')
+        frame.save(unique_frame_path, format="PNG")
 
         # Create references (first is the actual file, rest are symlinks)
         for j in range(num_frames):
@@ -168,29 +163,29 @@ def build_ffmpeg_pipeline(
     video_codec: str,
     crf: int,
     preset: str,
-    audio_file: str | None
+    audio_file: str | None,
 ):
     """Build and execute FFmpeg pipeline for video encoding."""
     # Build FFmpeg input based on mode
     if mode == "vfr":
         if concat_file is None:
             raise ValueError("concat_file is required for VFR mode")
-        video_input = ffmpeg.input(str(concat_file), f='concat', safe=0)
+        video_input = ffmpeg.input(str(concat_file), f="concat", safe=0)
     else:  # mode == "cfr"
         pattern = str(temp_path / "frame_%06d.png")
         video_input = ffmpeg.input(pattern, framerate=fps)
 
     # Build output with encoding options
     output_kwargs = {
-        'vcodec': video_codec,
-        'crf': crf,
-        'preset': preset,
-        'pix_fmt': 'yuv420p',  # For compatibility
+        "vcodec": video_codec,
+        "crf": crf,
+        "preset": preset,
+        "pix_fmt": "yuv420p",  # For compatibility
     }
 
     # Add mode-specific options
     if mode == "vfr":
-        output_kwargs['vsync'] = 'vfr'  # Variable frame rate - respects exact durations from concat
+        output_kwargs["vsync"] = "vfr"  # Variable frame rate - respects exact durations from concat
 
     # Create output with or without audio
     if audio_file:
@@ -201,12 +196,12 @@ def build_ffmpeg_pipeline(
         audio_input = ffmpeg.input(str(audio_path))
 
         # Explicitly select video stream from concat input and audio stream from audio input
-        output_kwargs['acodec'] = 'copy'  # Copy audio stream without re-encoding
+        output_kwargs["acodec"] = "copy"  # Copy audio stream without re-encoding
         # Allow experimental codecs (like Opus in MP4) when copying audio
-        output_kwargs['strict'] = 'experimental'
+        output_kwargs["strict"] = "experimental"
 
         # Map the streams
-        stream = ffmpeg.output(video_input['v'], audio_input['a'], str(output_path), **output_kwargs)
+        stream = ffmpeg.output(video_input["v"], audio_input["a"], str(output_path), **output_kwargs)
     else:
         # Video only
         stream = ffmpeg.output(video_input, str(output_path), **output_kwargs)
@@ -227,7 +222,7 @@ def reassemble_video_from_folder(
     crf: int = 23,
     preset: str = "medium",
     mode: FrameMode = "vfr",
-    fps: float = 25.0
+    fps: float = 25.0,
 ) -> None:
     """
     Reassemble video from extracted frames folder.
@@ -282,38 +277,17 @@ def reassemble_video_from_folder(
 
             if mode == "vfr":
                 concat_file = prepare_frames_vfr(
-                    temp_path,
-                    frames,
-                    metadata.timestamps,
-                    metadata.video_info.duration,
-                    progress,
-                    task
+                    temp_path, frames, metadata.timestamps, metadata.video_info.duration, progress, task
                 )
             else:  # mode == "cfr"
                 prepare_frames_cfr(
-                    temp_path,
-                    frames,
-                    metadata.timestamps,
-                    metadata.video_info.duration,
-                    fps,
-                    progress,
-                    task
+                    temp_path, frames, metadata.timestamps, metadata.video_info.duration, fps, progress, task
                 )
 
         logger.info("Encoding video with FFmpeg...")
 
         # Build and run FFmpeg pipeline
-        build_ffmpeg_pipeline(
-            temp_path,
-            output_path,
-            mode,
-            fps,
-            concat_file,
-            video_codec,
-            crf,
-            preset,
-            audio_file
-        )
+        build_ffmpeg_pipeline(temp_path, output_path, mode, fps, concat_file, video_codec, crf, preset, audio_file)
 
     logger.info(f"Video saved to: {output_path}")
     logger.info("Done!")
@@ -327,6 +301,6 @@ def main(
     crf: int = 23,
     preset: str = "medium",
     mode: FrameMode = "vfr",
-    fps: float = 25.0
+    fps: float = 25.0,
 ) -> None:
     reassemble_video_from_folder(frames_folder, output_file, audio_file, video_codec, crf, preset, mode, fps)

@@ -29,16 +29,25 @@ def test_file_to_file_metadata_keep(tmp_path: Path):
     """Exiftool copies EXIF from original to compressed output."""
     out = tmp_path / "out.jpg"
     with _mock_tinify():
-        result = runner.invoke(app, [
-            "compress-image", str(TEST_IMAGE),
-            "--output", str(out),
-            "--api-key", "test-key",
-            "--metadata", "keep",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "compress-image",
+                str(TEST_IMAGE),
+                "--output",
+                str(out),
+                "--api-key",
+                "test-key",
+                "--metadata",
+                "keep",
+            ],
+        )
     assert result.exit_code == 0, result.stderr
     assert out.read_bytes()[:2] == b"\xff\xd8"
     exif = subprocess.run(
-        [str(resolve_tool("exiftool")), "-Make", str(out)], capture_output=True, text=True,
+        [str(resolve_tool("exiftool")), "-Make", str(out)],
+        capture_output=True,
+        text=True,
     )
     assert "TestCamera" in exif.stdout
 
@@ -47,11 +56,17 @@ def test_stdin_to_file(tmp_path: Path):
     """Reading from stdin calls from_buffer and produces output."""
     out = tmp_path / "out.jpg"
     with _mock_tinify() as ctx:
-        result = runner.invoke(app, [
-            "compress-image",
-            "--output", str(out),
-            "--api-key", "test-key",
-        ], input=TEST_IMAGE.read_bytes())
+        result = runner.invoke(
+            app,
+            [
+                "compress-image",
+                "--output",
+                str(out),
+                "--api-key",
+                "test-key",
+            ],
+            input=TEST_IMAGE.read_bytes(),
+        )
     assert result.exit_code == 0, result.stderr
     ctx.from_buffer.assert_called_once()
     assert out.exists()

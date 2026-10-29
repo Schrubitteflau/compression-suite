@@ -45,7 +45,7 @@ def _api_key_missing(path: Path, reason: str) -> CommandError:
     """The `api_key_missing` error, naming the reason and the expected file."""
     return CommandError(
         ErrorCode.API_KEY_MISSING,
-        f"No Tinify API key: {reason}. Pass --api-key, or write `{API_KEY_FIELD} = \"...\"` in {path} (chmod 600).",
+        f'No Tinify API key: {reason}. Pass --api-key, or write `{API_KEY_FIELD} = "..."` in {path} (chmod 600).',
         {"config_path": str(path)},
     )
 

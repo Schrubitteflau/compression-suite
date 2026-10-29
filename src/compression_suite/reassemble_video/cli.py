@@ -2,7 +2,6 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -18,11 +17,21 @@ console = Console()
 def reassemble_video(
     frames_folder: str = typer.Argument(..., help="Path to folder containing extracted frames and metadata.json"),
     output_file: str = typer.Argument(..., help="Path to output video file (e.g., output.mp4)"),
-    audio_file: Optional[str] = typer.Option(None, "--audio", "-a", help="Path to audio file to include in the video"),
+    audio_file: str | None = typer.Option(None, "--audio", "-a", help="Path to audio file to include in the video"),
     video_codec: str = typer.Option("libx264", "--codec", "-c", help="FFmpeg video codec (default: libx264)"),
     crf: int = typer.Option(23, "--crf", help="Constant Rate Factor for quality (0-51, lower is better, default: 23)"),
-    preset: str = typer.Option("medium", "--preset", "-p", help="Encoding preset (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)"),
-    mode: str = typer.Option("vfr", "--mode", "-m", help="Frame rate mode: 'vfr' (variable, most accurate) or 'cfr' (constant, better player compatibility)"),
+    preset: str = typer.Option(
+        "medium",
+        "--preset",
+        "-p",
+        help="Encoding preset (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)",
+    ),
+    mode: str = typer.Option(
+        "vfr",
+        "--mode",
+        "-m",
+        help="Frame rate mode: 'vfr' (variable, most accurate) or 'cfr' (constant, better player compatibility)",
+    ),
     fps: float = typer.Option(25.0, "--fps", help="Target framerate for CFR mode (default: 25.0)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:

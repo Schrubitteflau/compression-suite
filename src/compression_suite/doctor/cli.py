@@ -56,6 +56,7 @@ def doctor(
     Fails with tool_missing (exit 30) if a pinned tool is not usable; a missing system dependency or key does not.
     The key is never shown.
     """
+
     def body() -> dict[str, Any]:
         """Build the report and return the `result` object of the JSON contract."""
         report = doctor_report()

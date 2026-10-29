@@ -78,15 +78,25 @@ def _fake_tinify(reencode: bool = False):
 
 
 def _invoke(
-    src: Path | None, out: Path, *args: str, input: bytes | None = None, reencode: bool = False,
+    src: Path | None,
+    out: Path,
+    *args: str,
+    input: bytes | None = None,
+    reencode: bool = False,
 ) -> tuple[Result, MagicMock]:
     """Run compress-image --json, returning the CLI result and the fake Tinify."""
     with _fake_tinify(reencode) as fake:
         result = runner.invoke(
             app,
             [
-                "compress-image", *([str(src)] if src is not None else []), "--output", str(out),
-                "--api-key", "test-key", "--json", *args,
+                "compress-image",
+                *([str(src)] if src is not None else []),
+                "--output",
+                str(out),
+                "--api-key",
+                "test-key",
+                "--json",
+                *args,
             ],
             input=input,
         )
@@ -189,7 +199,8 @@ def test_s23_motion_photo_gives_a_single_refusal_listing_both_formats(tmp_path: 
 def test_s23_motion_photo_error_message_names_the_flag(tmp_path: Path):
     with _fake_tinify():
         result = runner.invoke(
-            app, ["compress-image", str(S23_MOTION_PHOTO), "--output", str(tmp_path / "out.jpg"), "--api-key", "k"],
+            app,
+            ["compress-image", str(S23_MOTION_PHOTO), "--output", str(tmp_path / "out.jpg"), "--api-key", "k"],
         )
     assert result.exit_code == 20
     assert "--allow-motion-photo-loss" in result.stderr
@@ -281,7 +292,8 @@ def test_bytes_after_the_container_items_are_trailing_data(tmp_path: Path):
 
 def test_container_items_longer_than_the_trailing_bytes_explain_nothing(tmp_path: Path):
     xmp = GCAMERA_XMP.format(attributes="", directory=CONTAINER_DIRECTORY.format(mime="video/mp4")).replace(
-        'Item:Length="0"', 'Item:Length="100000"',
+        'Item:Length="0"',
+        'Item:Length="100000"',
     )
     src = _write(tmp_path, "photo.jpg", _jpeg(xmp) + b"short video")
     out = tmp_path / "out.jpg"
@@ -289,9 +301,14 @@ def test_container_items_longer_than_the_trailing_bytes_explain_nothing(tmp_path
 
 
 def test_container_item_padding_after_the_primary_image_is_explained(tmp_path: Path):
-    xmp = GCAMERA_XMP.format(attributes="", directory=CONTAINER_DIRECTORY.format(mime="video/mp4")).replace(
-        'Item:Semantic="Primary"', 'Item:Semantic="Primary" Item:Padding="4"',
-    ).replace('Item:Length="0"', 'Item:Length="5"')
+    xmp = (
+        GCAMERA_XMP.format(attributes="", directory=CONTAINER_DIRECTORY.format(mime="video/mp4"))
+        .replace(
+            'Item:Semantic="Primary"',
+            'Item:Semantic="Primary" Item:Padding="4"',
+        )
+        .replace('Item:Length="0"', 'Item:Length="5"')
+    )
     src = _write(tmp_path, "photo.jpg", _jpeg(xmp) + b"\0\0\0\0" + b"video")
     out = tmp_path / "out.jpg"
     assert _assert_refused(*_invoke(src, out), out) == ["xmp_container_video"]
@@ -360,9 +377,15 @@ def test_allowed_loss_of_the_s23_motion_photo_gives_its_reason(tmp_path: Path):
     metadata = json.loads(result.stdout)["result"]["metadata"]
     expected = {loss["tag"]: loss["reason"] for loss in metadata["expected_losses"]}
     for tag in (
-        "XMP-GCamera:MotionPhoto", "XMP-GCamera:MotionPhotoVersion", "XMP-GCamera:MotionPhotoPresentationTimestampUs",
-        "XMP-GContainer:DirectoryItemMime", "XMP-GContainer:DirectoryItemLength", "Google:MotionPhotoVideo",
-        "Samsung:EmbeddedVideoType", "Samsung:EmbeddedVideoFile", "XMP-x:XMPToolkit",
+        "XMP-GCamera:MotionPhoto",
+        "XMP-GCamera:MotionPhotoVersion",
+        "XMP-GCamera:MotionPhotoPresentationTimestampUs",
+        "XMP-GContainer:DirectoryItemMime",
+        "XMP-GContainer:DirectoryItemLength",
+        "Google:MotionPhotoVideo",
+        "Samsung:EmbeddedVideoType",
+        "Samsung:EmbeddedVideoFile",
+        "XMP-x:XMPToolkit",
     ):
         assert expected[tag] == MOTION_PHOTO_REASON, tag
 
