@@ -176,9 +176,10 @@ Exit codes are the same with or without `--json`.
 | `motion_photo` | 20 | Motion photo detected without `--allow-motion-photo-loss` | `signals` |
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |
-| `input_not_found` | 23 | Input missing, not a file or not readable | |
+| `input_not_found` | 23 | Input missing or not a file | |
 | `output_exists` | 24 | Output exists without `--overwrite`, or is a directory | |
 | `metadata_copy_failed` | 25 | exiftool failed to copy metadata back | |
+| `input_unreadable` | 26 | Input present but not readable (permissions) | |
 | `tool_missing` | 30 | Pinned exiftool not installed, not runnable, or of another version than the manifest's | `tool`, `expected_version`, `install_command` |
 | `internal_error` | 50 | Any other error | |
 | `interrupted` | 130 | Interrupted by user (Ctrl+C) | |

@@ -172,12 +172,12 @@ def test_missing_input_is_input_not_found(tmp_path: Path, missing_path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
-def test_unreadable_input_is_input_not_found(tmp_path: Path):
+def test_unreadable_input_is_input_unreadable(tmp_path: Path):
     path = _copy(S23_PHOTO, tmp_path)
     path.chmod(0)
     result = _invoke(path)
-    assert result.exit_code == 23, result.output
-    assert json.loads(result.stdout)["error"]["code"] == "input_not_found"
+    assert result.exit_code == 26, result.output
+    assert json.loads(result.stdout)["error"]["code"] == "input_unreadable"
 
 
 def test_text_named_like_a_jpeg_is_not_compressible(tmp_path: Path):

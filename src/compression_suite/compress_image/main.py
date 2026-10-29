@@ -109,13 +109,13 @@ EXIFTOOL_EXTRA_TAGS = [
 
 
 def validate_input_file(path: str) -> Path:
-    """Check that the input exists, is a regular file and can be read."""
+    """Check that the input exists and is a regular file (`input_not_found`), which can be read (`input_unreadable`)."""
     p = Path(path)
     if not p.is_file():
         reason = "is not a file" if p.exists() else "does not exist"
         raise CommandError(ErrorCode.INPUT_NOT_FOUND, f"Input file {reason}: {path}")
     if not os.access(p, os.R_OK):
-        raise CommandError(ErrorCode.INPUT_NOT_FOUND, f"Input file is not readable: {path}")
+        raise CommandError(ErrorCode.INPUT_UNREADABLE, f"Input file is not readable: {path}")
     return p
 
 

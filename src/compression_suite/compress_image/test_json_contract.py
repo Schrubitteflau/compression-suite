@@ -215,6 +215,17 @@ def test_input_is_a_directory(tmp_path: Path):
     _assert_tinify_not_called(fake)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_input_unreadable(tmp_path: Path):
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(_image_bytes("JPEG"))
+    src.chmod(0)
+    with _fake_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.jpg"), "--json")
+    _assert_error(result, "input_unreadable", 26)
+    _assert_tinify_not_called(fake)
+
+
 @pytest.mark.parametrize(
     ("data", "detected"),
     [

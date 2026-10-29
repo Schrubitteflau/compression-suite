@@ -2,7 +2,7 @@
 
 Describe any file, compressible or not: real format, MIME type, size, modification date, important fields, full metadata and motion photo signals.
 
-It never contacts Tinify and needs no API key. A format nobody knows is not an error: only a missing or unreadable input (`input_not_found`, exit 23) and a missing pinned exiftool (`tool_missing`, exit 30) make it fail.
+It never contacts Tinify and needs no API key. A format nobody knows is not an error: only a missing input (`input_not_found`, exit 23), an input present but unreadable (`input_unreadable`, exit 26) and a missing pinned exiftool (`tool_missing`, exit 30) make it fail.
 
 ## Prerequisites
 
