@@ -362,7 +362,7 @@ def test_allowed_loss_of_the_s23_motion_photo_gives_its_reason(tmp_path: Path):
     for tag in (
         "XMP-GCamera:MotionPhoto", "XMP-GCamera:MotionPhotoVersion", "XMP-GCamera:MotionPhotoPresentationTimestampUs",
         "XMP-GContainer:DirectoryItemMime", "XMP-GContainer:DirectoryItemLength", "Google:MotionPhotoVideo",
-        "Samsung:EmbeddedVideoType", "Samsung:EmbeddedVideoFile",
+        "Samsung:EmbeddedVideoType", "Samsung:EmbeddedVideoFile", "XMP-x:XMPToolkit",
     ):
         assert expected[tag] == MOTION_PHOTO_REASON, tag
 

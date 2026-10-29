@@ -50,7 +50,7 @@ compression_suite compress-image photo.jpg --output compressed.jpg --api-key=YOU
 
 ### `--metadata=keep` (default)
 
-Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no Samsung trailer. After the compression, metadata from the original image is copied back to the compressed file using exiftool. A blacklist approach is used — all tags are copied (`-all:all`, plus the ICC profile, the IFD0 dimensions and the Interop tags, which exiftool only copies when named) except those that become invalid after compression:
+Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no Samsung trailer. After the compression, metadata from the original image is copied back to the compressed file using exiftool. A blacklist approach is used — all tags are copied (`-all:all`, plus the ICC profile, the IFD0 dimensions, the Interop tags and the XMP toolkit `XMP-x:XMPToolkit`, which exiftool only copies when named: it would otherwise name itself as the toolkit of the XMP it rewrites) except those that become invalid after compression:
 
 - **ThumbnailImage**: the EXIF thumbnail shows the original image, it is removed on purpose
 - **Compression**: belongs to the thumbnail
@@ -101,7 +101,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 
 A motion photo carries a short video after its image. Tinify only returns the image, so `compress-image` detects a motion photo **before** calling Tinify and refuses it (`motion_photo`, exit 20) without using a credit. `details.signals` lists every signal found; one is enough to refuse.
 
-`--allow-motion-photo-loss` compresses it anyway. The XMP declaring the video (`XMP-GCamera:MotionPhoto*`, `XMP-GCamera:MicroVideo*`, `Container:Directory`) is then not copied back, so the compressed file no longer claims a video it doesn't have; the rest of the XMP is kept. These tags, the video itself (`Google:MotionPhotoVideo`, `Samsung:EmbeddedVideo*`) and the XMP toolkit (set again when the XMP is rewritten, gone when nothing else remained) are expected losses, with the reason « photo animée : perte autorisée ».
+`--allow-motion-photo-loss` compresses it anyway. The XMP declaring the video (`XMP-GCamera:MotionPhoto*`, `XMP-GCamera:MicroVideo*`, `Container:Directory`) is then not copied back, so the compressed file no longer claims a video it doesn't have; the rest of the XMP is kept. These tags, the video itself (`Google:MotionPhotoVideo`, `Samsung:EmbeddedVideo*`) and the XMP toolkit when nothing else remained in the XMP (copied back otherwise) are expected losses, with the reason « photo animée : perte autorisée ».
 
 The detector (`utils/motion_photo.py`, meant to be reused by `inspect`) looks for these signals, in this order:
 

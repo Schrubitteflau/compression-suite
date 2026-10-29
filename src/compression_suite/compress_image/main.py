@@ -81,7 +81,7 @@ MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
 # Losses of a motion photo compressed with --allow-motion-photo-loss, which come before EXPECTED_LOSSES (the Samsung
 # video entry is also a trailer field). The XMP declaring the video is not copied back: the compressed file would
-# still claim a video it no longer has. Rewriting that XMP sets its toolkit, and drops it if nothing else remains.
+# still claim a video it no longer has. Its toolkit, copied back with the rest, is dropped if nothing else remains.
 MOTION_PHOTO_LOSSES = [
     ExpectedLoss("XMP-GCamera:MotionPhoto*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MotionPhoto*"),
     ExpectedLoss("XMP-GCamera:MicroVideo*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MicroVideo*"),
@@ -96,13 +96,15 @@ EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [
 ]
 
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
-# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost).
+# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost; without XMPToolkit,
+# exiftool would name itself as the toolkit of the XMP it rewrites).
 EXIFTOOL_EXTRA_TAGS = [
     "-InteropIndex",
     "-InteropVersion",
     "-ICC_Profile",
     "-IFD0:ImageWidth",
     "-IFD0:ImageHeight",
+    "-XMP-x:XMPToolkit",
 ]
 
 

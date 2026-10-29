@@ -196,6 +196,28 @@ def test_before_and_after_skip_file_system_and_computed_groups(tmp_path: Path):
     assert metadata["before"]["File:ImageWidth"] == 4000
 
 
+# --- Photo with XMP -----------------------------------------------------------
+
+TOOLKIT_XMP = """<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Neutral</rdf:li></rdf:Alt></dc:title>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"""
+
+
+def test_xmp_toolkit_is_kept(tmp_path: Path):
+    """exiftool names itself as the toolkit of the XMP it writes, unless the original's is copied back."""
+    src = tmp_path / "photo.jpg"
+    Image.new("RGB", (64, 48), (53, 132, 228)).save(src, format="JPEG", xmp=TOOLKIT_XMP.encode())
+    metadata = _compress(src, tmp_path / "out.jpg")
+    assert metadata["before"]["XMP-x:XMPToolkit"] == "Adobe XMP Core 5.1"
+    assert metadata["after"]["XMP-x:XMPToolkit"] == "Adobe XMP Core 5.1"
+    assert metadata["after"]["XMP-dc:Title"] == "Neutral"
+    assert metadata["unexpected_losses"] == []
+
+
 # --- PNG capture --------------------------------------------------------------
 
 
