@@ -1,5 +1,7 @@
 """CLI tests for the metadata diff of compress-image --json — Tinify is faked, exiftool runs for real.
 
+Only cases the command can't reach call diff_metadata directly.
+
 The fake Tinify behaves like the real one on the samples: it re-encodes the pixels and keeps no metadata
 at all (no EXIF, no ICC profile, no PNG text block, no Samsung trailer).
 """
@@ -15,6 +17,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageStat
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.utils.metadata_diff import diff_metadata
 
 runner = CliRunner()
 
@@ -457,6 +460,7 @@ ORIENTATION_REASON = "orientation appliquée aux pixels"
 ROTATED_DIMENSIONS_REASON = "pixels pivotés selon l'orientation : l'image affichée garde ses dimensions"
 ROTATE_90_CW = 6
 MIRROR_HORIZONTAL = 2
+ORIENTATIONS = [(ROTATE_90_CW, "Rotate 90 CW"), (MIRROR_HORIZONTAL, "Mirror horizontal")]
 
 ORIENTATION_XMP = """<x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -491,9 +495,7 @@ def _displayed_difference(a: Path, b: Path) -> float:
     return sum(ImageStat.Stat(ImageChops.difference(first, second)).mean) / 3
 
 
-@pytest.mark.parametrize(
-    ("orientation", "name"), [(ROTATE_90_CW, "Rotate 90 CW"), (MIRROR_HORIZONTAL, "Mirror horizontal")]
-)
+@pytest.mark.parametrize(("orientation", "name"), ORIENTATIONS)
 def test_orientation_applied_by_tinify_is_reset(tmp_path: Path, orientation: int, name: str):
     src = _oriented_jpeg(tmp_path, orientation)
     out = tmp_path / "out.jpg"
@@ -508,9 +510,7 @@ def test_orientation_applied_by_tinify_is_reset(tmp_path: Path, orientation: int
     assert _displayed_difference(src, out) < 5
 
 
-@pytest.mark.parametrize(
-    ("orientation", "name"), [(ROTATE_90_CW, "Rotate 90 CW"), (MIRROR_HORIZONTAL, "Mirror horizontal")]
-)
+@pytest.mark.parametrize(("orientation", "name"), ORIENTATIONS)
 def test_orientation_not_applied_by_tinify_is_copied_back(tmp_path: Path, orientation: int, name: str):
     src = _oriented_jpeg(tmp_path, orientation)
     out = tmp_path / "out.jpg"
@@ -564,6 +564,23 @@ def test_output_displayed_otherwise_than_the_original_is_unexpected(
 ):
     metadata = _compress(_oriented_jpeg(tmp_path, orientation), tmp_path / "out.jpg", transpose=transpose)
     assert "pixels:orientation" in {loss["tag"] for loss in metadata["unexpected_losses"]}
+
+
+def test_orientation_copied_back_onto_turned_pixels_is_unexpected():
+    """The S23 portrait bug, which the command can no longer reach: `Rotate 90 CW` on pixels already turned."""
+    before = {"File:ImageWidth": 4000, "File:ImageHeight": 3000, "IFD0:Orientation": "Rotate 90 CW"}
+    after = {"File:ImageWidth": 3000, "File:ImageHeight": 4000, "IFD0:Orientation": "Rotate 90 CW"}
+    metadata = diff_metadata(before, after, [], transparency=(False, False))
+    assert {"tag": "File:ImageWidth", "kind": "changed", "before": 4000, "after": 3000} in metadata["unexpected_losses"]
+    assert _important(metadata)["dimensions"]["after"] == {"width": 4000, "height": 3000}
+
+
+def test_dimension_tag_lost_while_another_group_keeps_the_size_is_unexpected():
+    """Only width and height swapped with the pixels are expected: a dimension tag merely lost is not."""
+    before = {"File:ImageWidth": 320, "File:ImageHeight": 200, "PNG:ImageWidth": 320, "PNG:ImageHeight": 200}
+    after = {"File:ImageWidth": 320, "File:ImageHeight": 200}
+    metadata = diff_metadata(before, after, [], transparency=(False, False))
+    assert {"tag": "PNG:ImageWidth", "kind": "removed", "before": 320, "after": None} in metadata["unexpected_losses"]
 
 
 def test_changed_displayed_dimensions_of_a_rotated_portrait_are_unexpected(tmp_path: Path):

@@ -1,6 +1,5 @@
 """Core logic for compress-image: Tinify API compression with metadata preservation."""
 
-import io
 import os
 import subprocess
 import sys
@@ -12,7 +11,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import tinify
-from PIL import Image
 from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
@@ -34,6 +32,7 @@ from compression_suite.utils.orientation import (
     is_oriented,
     orientation_applied,
     same_displayed_picture,
+    stored_size,
 )
 from compression_suite.utils.pinned_tools import resolve_tool
 
@@ -124,18 +123,14 @@ EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in MOTIO
 
 ORIENTATION_REASON = "orientation appliquée aux pixels"
 
-# Tags giving the size of the stored pixels, which a quarter turn applied by Tinify swaps: (tag, width or height).
-STORED_SIZE_TAGS = (
-    ("IFD0:ImageWidth", 0),
-    ("IFD0:ImageHeight", 1),
-    ("ExifIFD:ExifImageWidth", 0),
-    ("ExifIFD:ExifImageHeight", 1),
-)
+# Tags giving the size of the stored pixels, which a quarter turn applied by Tinify swaps.
+STORED_WIDTH_TAGS = ("IFD0:ImageWidth", "ExifIFD:ExifImageWidth")
+STORED_HEIGHT_TAGS = ("IFD0:ImageHeight", "ExifIFD:ExifImageHeight")
 
 # Losses of an image whose orientation Tinify applied to the pixels: copied back, the orientation would be applied a
 # second time. It is written as normal instead, and the stored size tags take the size of the compressed pixels.
 ORIENTATION_APPLIED_LOSSES = [
-    ExpectedLoss(tag, ORIENTATION_REASON) for tag in (*ORIENTATION_TAGS, *(tag for tag, _ in STORED_SIZE_TAGS))
+    ExpectedLoss(tag, ORIENTATION_REASON) for tag in (*ORIENTATION_TAGS, *STORED_WIDTH_TAGS, *STORED_HEIGHT_TAGS)
 ]
 
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
@@ -226,11 +221,10 @@ def applied_orientation_tags(original_tags: dict[str, Any], compressed: bytes) -
 
     Only the tags of the original are written. Applied after the copy in the same command, they win over it.
     """
-    with Image.open(io.BytesIO(compressed)) as image:
-        size = image.size
-    return [f"-{tag}#=1" for tag in ORIENTATION_TAGS if tag in original_tags] + [
-        f"-{tag}={size[axis]}" for tag, axis in STORED_SIZE_TAGS if tag in original_tags
-    ]
+    width, height = stored_size(compressed)
+    assignments = [(tag, "1") for tag in ORIENTATION_TAGS]
+    assignments += [(tag, str(width)) for tag in STORED_WIDTH_TAGS] + [(tag, str(height)) for tag in STORED_HEIGHT_TAGS]
+    return [f"-{tag}#={value}" for tag, value in assignments if tag in original_tags]
 
 
 def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_args: list[str]):
@@ -379,10 +373,11 @@ def compress_image(
 
         compressed_buffer = call_tinify(prepare_source)
 
+        # Only an oriented original can be turned twice; with --metadata strip, no orientation is copied back
         oriented = is_oriented(original_tags)
-        rotated = oriented and orientation_applied(exiftool_source, compressed_buffer)
-        orientation_args = applied_orientation_tags(original_tags, compressed_buffer) if rotated else []
-        if rotated:
+        pixels_turned = metadata == "keep" and oriented and orientation_applied(exiftool_source, compressed_buffer)
+        orientation_args = applied_orientation_tags(original_tags, compressed_buffer) if pixels_turned else []
+        if pixels_turned:
             expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
 
         def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None, bool | None]:

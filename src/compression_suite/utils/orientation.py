@@ -70,16 +70,25 @@ def _difference(first: tuple[Image.Image, float], second: tuple[Image.Image, flo
     return ImageStat.Stat(ImageChops.difference(first_pixels, second_pixels)).mean[0]
 
 
+def stored_size(source: Path | bytes) -> tuple[int, int]:
+    """The width and height of the stored pixels, read without decoding them."""
+    with Image.open(source if isinstance(source, Path) else io.BytesIO(source)) as image:
+        return image.size
+
+
 def orientation_applied(original: Path, compressed: bytes) -> bool:
     """Whether the stored pixels of the compressed image are those of the original as displayed rather than as stored.
 
-    False when either can't be decoded: the original's orientation is then copied back, as for any other tag.
+    They must show the same picture as the original displayed, and be closer to it than to the original stored. False
+    when they can't be told apart, or either can't be decoded: the original's orientation is then copied back, as for
+    any other tag, and an output displayed otherwise is caught by same_displayed_picture.
     """
     displayed, stored = _grayscale_copy(original, oriented=True), _grayscale_copy(original, oriented=False)
     compressed_copy = _grayscale_copy(compressed, oriented=False)
     if displayed is None or stored is None or compressed_copy is None:
         return False
-    return _difference(compressed_copy, displayed) < _difference(compressed_copy, stored)
+    to_displayed = _difference(compressed_copy, displayed)
+    return to_displayed <= SAME_PICTURE_MAX_DIFFERENCE and to_displayed < _difference(compressed_copy, stored)
 
 
 def same_displayed_picture(original: Path, output: Path) -> bool | None:
