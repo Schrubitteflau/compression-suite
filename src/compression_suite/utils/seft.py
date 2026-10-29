@@ -23,7 +23,7 @@ _INDEX_HEADER_SIZE = 12
 _INDEX_ENTRY_SIZE = 12
 _ENTRY_HEADER_SIZE = 8
 
-# A whole file in memory, or mapped: a large file (a video passed to inspect) needs not be read.
+# A whole file in memory, or mapped: a large file (a video passed to inspect) doesn't have to be read.
 FileBytes = bytes | mmap.mmap
 
 

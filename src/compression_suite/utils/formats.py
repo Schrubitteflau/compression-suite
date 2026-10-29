@@ -5,6 +5,8 @@ from pathlib import Path
 # Bytes needed to recognise every format below (enough for an `ftyp` box with its compatible brands).
 HEADER_SIZE = 64
 
+UNKNOWN_FORMAT = "unknown"
+
 # ISO base media file format brands (bytes 8-12 of the `ftyp` box).
 _AVIF_BRANDS = {b"avif", b"avis"}
 _HEIC_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs"}
@@ -31,7 +33,7 @@ def detect_format(header: bytes) -> str:
             return "heic"
         if brands & _HEIF_BRANDS:
             return "heif"
-    return "unknown"
+    return UNKNOWN_FORMAT
 
 
 def _ftyp_brands(header: bytes) -> set[bytes]:

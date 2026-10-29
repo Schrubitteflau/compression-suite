@@ -11,13 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from compression_suite.compress_image.main import SUPPORTED_FORMATS, iso_mtime, validate_input_file
-from compression_suite.utils.formats import detect_file_format
+from compression_suite.utils.formats import UNKNOWN_FORMAT, detect_file_format
 from compression_suite.utils.metadata_diff import important_values, pixel_transparency, read_metadata
 from compression_suite.utils.motion_photo import detect_motion_photo
 from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.utils.seft import FileBytes
 
-UNKNOWN_FORMAT = "unknown"
 DEFAULT_MIME_TYPE = "application/octet-stream"
 
 # MIME types of the formats detect_format recognises; exiftool names the others.
@@ -44,18 +43,16 @@ def mapped_file(path: Path) -> Iterator[FileBytes]:
             yield data
 
 
-def file_format(path: Path, tags: dict[str, Any]) -> tuple[str, str]:
+def file_format(detected_format: str, tags: dict[str, Any]) -> tuple[str, str]:
     """The format detected on the content, and its MIME type.
 
     detect_format comes first, as for compress-image; exiftool, which also reads the content, names the rest.
     """
-    fmt = detect_file_format(path)
-    if fmt != UNKNOWN_FORMAT:
-        return fmt, MIME_TYPES[fmt]
+    exiftool_mime_type = tags.get("File:MIMEType", DEFAULT_MIME_TYPE)
+    if detected_format != UNKNOWN_FORMAT:
+        return detected_format, MIME_TYPES.get(detected_format, exiftool_mime_type)
     exiftool_type = tags.get("File:FileType")
-    if exiftool_type is None:
-        return UNKNOWN_FORMAT, tags.get("File:MIMEType", DEFAULT_MIME_TYPE)
-    return str(exiftool_type).lower(), tags.get("File:MIMEType", DEFAULT_MIME_TYPE)
+    return (str(exiftool_type).lower() if exiftool_type is not None else UNKNOWN_FORMAT), exiftool_mime_type
 
 
 def inspect_file(input_file: str) -> dict[str, Any]:
@@ -65,7 +62,8 @@ def inspect_file(input_file: str) -> dict[str, Any]:
     stat = path.stat()
     mtime = iso_mtime(stat)
     tags = read_metadata(exiftool, path)
-    fmt, mime_type = file_format(path, tags)
+    detected_format = detect_file_format(path)
+    fmt, mime_type = file_format(detected_format, tags)
     with mapped_file(path) as data:
         motion_photo = detect_motion_photo(data, tags)
     return {
@@ -74,7 +72,7 @@ def inspect_file(input_file: str) -> dict[str, Any]:
         "mime_type": mime_type,
         "size_bytes": stat.st_size,
         "mtime": mtime,
-        "compressible": fmt in SUPPORTED_FORMATS,
+        "compressible": detected_format in SUPPORTED_FORMATS,  # what compress-image itself checks
         "motion_photo": motion_photo,
         "important": important_values(tags, mtime, pixel_transparency(path)),
         "metadata": tags,

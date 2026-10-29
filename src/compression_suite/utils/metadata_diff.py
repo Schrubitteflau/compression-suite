@@ -207,7 +207,8 @@ def _field_value(field: ImportantField, tags: dict[str, Any]) -> tuple[Any, str 
 def important_values(tags: dict[str, Any], mtime: str | None, transparency: bool | None) -> list[dict[str, Any]]:
     """Every important field of a single file, in the diff's order, with its value and source (inspect).
 
-    `mtime` is the file's ISO 8601 mtime, the capture date of last resort.
+    `mtime` is the file's ISO 8601 mtime, the capture date of last resort. `transparency` is None, and so is its
+    source, when Pillow can't decode the file.
     """
     fields = []
     for field in IMPORTANT_FIELDS:
@@ -215,8 +216,10 @@ def important_values(tags: dict[str, Any], mtime: str | None, transparency: bool
         if source is None and field.mtime_fallback and mtime is not None:
             value, source = mtime, MTIME_SOURCE
         fields.append({"key": field.key, "value": value, "source": source})
-    fields.append({"key": "transparency", "value": transparency, "source": TRANSPARENCY_SOURCE})
+    transparency_source = TRANSPARENCY_SOURCE if transparency is not None else None
+    fields.append({"key": "transparency", "value": transparency, "source": transparency_source})
     return fields
+
 
 
 def _status(before: Any, after: Any) -> str:

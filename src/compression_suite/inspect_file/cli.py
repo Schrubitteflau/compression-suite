@@ -14,19 +14,22 @@ def _format_value(value: Any) -> str:
         return ", ".join(f"{part}={_format_value(part_value)}" for part, part_value in value.items())
     if isinstance(value, list):
         return ", ".join(_format_value(item) for item in value)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
     return str(value)
 
 
 def print_report(result: dict[str, Any]) -> None:
     """Write the description of a file on stdout, for a human."""
     motion_photo = result["motion_photo"]
+    signals = f" ({', '.join(motion_photo['signals'])})" if motion_photo["detected"] else ""
     lines = [
         f"File: {result['path']}",
         f"Format: {result['format']} ({result['mime_type']})",
         f"Size: {result['size_bytes']:,} bytes",
         f"Modified: {result['mtime']}",
-        f"Compressible: {'yes' if result['compressible'] else 'no'}",
-        f"Motion photo: {'yes (' + ', '.join(motion_photo['signals']) + ')' if motion_photo['detected'] else 'no'}",
+        f"Compressible: {_format_value(result['compressible'])}",
+        f"Motion photo: {_format_value(motion_photo['detected'])}{signals}",
         "",
         "Important fields:",
     ]

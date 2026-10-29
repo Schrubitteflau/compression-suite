@@ -28,13 +28,11 @@ MTIME_ISO = "2022-08-09T10:11:12.654321+00:00"
 
 def _copy(src: Path, tmp_path: Path, name: str | None = None) -> Path:
     """Copy a sample with a known mtime."""
-    path = tmp_path / (name or src.name)
-    path.write_bytes(src.read_bytes())
-    os.utime(path, ns=(MTIME_NS, MTIME_NS))
-    return path
+    return _write(tmp_path, name or src.name, src.read_bytes())
 
 
 def _write(tmp_path: Path, name: str, data: bytes) -> Path:
+    """Write a file with a known mtime."""
     path = tmp_path / name
     path.write_bytes(data)
     os.utime(path, ns=(MTIME_NS, MTIME_NS))
@@ -135,7 +133,7 @@ def test_text_file_is_described_by_exiftool(tmp_path: Path):
     assert result["motion_photo"] == {"detected": False, "signals": []}
     important = _important(result)
     assert important["dimensions"] == {"key": "dimensions", "value": None, "source": None}
-    assert important["transparency"] == {"key": "transparency", "value": None, "source": "pixels"}
+    assert important["transparency"] == {"key": "transparency", "value": None, "source": None}
     assert result["metadata"]["File:LineCount"] == 1
 
 
@@ -166,11 +164,26 @@ def test_empty_file_is_a_success(tmp_path: Path):
 # --- Errors ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("make", [lambda tmp: tmp / "missing.jpg", lambda tmp: tmp])
-def test_missing_input_is_input_not_found(tmp_path: Path, make):
-    result = _invoke(make(tmp_path))
+@pytest.mark.parametrize("missing_path", [lambda tmp: tmp / "missing.jpg", lambda tmp: tmp])
+def test_missing_input_is_input_not_found(tmp_path: Path, missing_path):
+    result = _invoke(missing_path(tmp_path))
     assert result.exit_code == 23, result.output
     assert json.loads(result.stdout)["error"]["code"] == "input_not_found"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_unreadable_input_is_input_not_found(tmp_path: Path):
+    path = _copy(S23_PHOTO, tmp_path)
+    path.chmod(0)
+    result = _invoke(path)
+    assert result.exit_code == 23, result.output
+    assert json.loads(result.stdout)["error"]["code"] == "input_not_found"
+
+
+def test_text_named_like_a_jpeg_is_not_compressible(tmp_path: Path):
+    result = _inspect(_write(tmp_path, "photo.jpg", b"hello\n"))
+    assert result["format"] == "txt"
+    assert result["compressible"] is False
 
 
 def test_missing_exiftool_is_tool_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

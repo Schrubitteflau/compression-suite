@@ -2,7 +2,7 @@
 
 Describe any file, compressible or not: real format, MIME type, size, modification date, important fields, full metadata and motion photo signals.
 
-It never contacts Tinify and needs no API key. A format nobody knows is not an error: only a missing input (`input_not_found`, exit 23) and a missing pinned exiftool (`tool_missing`, exit 30) make it fail.
+It never contacts Tinify and needs no API key. A format nobody knows is not an error: only a missing or unreadable input (`input_not_found`, exit 23) and a missing pinned exiftool (`tool_missing`, exit 30) make it fail.
 
 ## Prerequisites
 
@@ -53,9 +53,9 @@ compression_suite inspect video.mp4 --json
 - **`format`**: detected on the content, never on the extension: `jpeg`, `png`, `webp`, `gif`, `pdf`, `avif`, `heic`, `heif` as for `compress-image`, else the file type exiftool reads in the content, lowercased (`mp4`, `mov`, `mp3`, `txt`…), else `unknown`.
 - **`mime_type`**: the MIME type of that format, exiftool's for the formats it names, else `application/octet-stream`.
 - **`mtime`**: ISO 8601, in UTC, to the microsecond.
-- **`compressible`**: whether `compress-image` accepts the format (JPEG, PNG, WebP, AVIF). A motion photo stays compressible: `compress-image` refuses it for its video, not for its format.
+- **`compressible`**: whether `compress-image` accepts the format (JPEG, PNG, WebP, AVIF), as its own detector reads it, never from exiftool's name. A motion photo stays compressible: `compress-image` refuses it for its video, not for its format.
 - **`motion_photo`**: the same detector and signals as [`compress-image`](compress-image.md#motion-photos). The file is mapped rather than read, so a large video costs no memory.
-- **`important`**: the same fields, in the same order, as the metadata diff of `compress-image`, with only `value` and `source`. `capture_date` falls back on the file's mtime (`source: "file_mtime"`). `value` and `source` are `null` when nothing gives the field, except `transparency`, whose `source` is always `pixels` and whose `value` is `null` when Pillow can't decode the file.
+- **`important`**: the same fields, in the same order, as the metadata diff of `compress-image`, with only `value` and `source`. `capture_date` falls back on the file's mtime (`source: "file_mtime"`). `value` and `source` are `null` when nothing gives the field. `transparency` is read on the pixels decoded by Pillow (`source: "pixels"`); both are `null` when Pillow can't decode the file.
 - **`metadata`**: every tag read by the pinned exiftool (`exiftool -j -G1 -a`, keyed `Group:Name`), without the ignored groups `System`, `Composite` and `ExifTool`.
 
 Without `--json`, the same description is printed on stdout for a human, and errors on stderr.
