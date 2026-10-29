@@ -2,8 +2,9 @@
 
 Only cases the command can't reach call diff_metadata directly.
 
-The fake Tinify behaves like the real one on the samples: it re-encodes the pixels and keeps no metadata
-at all (no EXIF, no ICC profile, no PNG text block, no Samsung trailer).
+The fake Tinify behaves like the real one on the samples: it applies the orientation, converts the colours to sRGB
+with the image's ICC profile, re-encodes the pixels and keeps no metadata at all (no EXIF, no ICC profile, no PNG text
+block, no Samsung trailer).
 """
 
 import io
@@ -13,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageCms, ImageDraw, ImageOps, ImageStat
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
@@ -27,6 +28,8 @@ SCREENSHOT = SAMPLES / "screenshot.png"
 
 SAMSUNG_TRAILER_REASON = "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"
 STRIP_REASON = "métadonnées retirées à la demande"
+COLORS_CONVERTED_REASON = "couleurs converties en sRGB par Tinify (gamut réduit)"
+P3_PROFILE = "DCI-P3 D65 Gamut with sRGB Transfer"
 REENCODING_REASON = "réencodage"
 
 # 2022-08-09T10:11:12.654321Z, in nanoseconds
@@ -39,19 +42,31 @@ def _reencode_like_tinify(
     drop_alpha: bool = False,
     apply_orientation: bool = True,
     transpose: Image.Transpose | None = None,
+    convert_colors: bool = True,
+    keep_icc_profile: bool = False,
 ) -> bytes:
     """Re-encode the pixels without any metadata, as Tinify does (progressive JPEG, palette PNG, same format else).
 
     Tinify applies the EXIF orientation to the pixels (seen on real calls, mirror included); `apply_orientation=False`
     keeps them as stored. `transpose` is applied to the stored pixels instead, and `drop_alpha` flattens the image
-    first, as a faulty compression would.
+    first, as a faulty compression would. Tinify converts the colours to sRGB with the ICC profile (seen on real calls,
+    for a P3 JPEG, PNG, WebP and AVIF); `convert_colors=False` keeps them as stored. `keep_icc_profile` writes the
+    original's profile back onto the pixels, converted or not.
     """
     image = Image.open(io.BytesIO(data))
     fmt = image.format
+    icc_profile = image.info.get("icc_profile")
     if transpose is not None:
         image = image.transpose(transpose)
     elif apply_orientation:
         image = ImageOps.exif_transpose(image)
+    if convert_colors and icc_profile:
+        source_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+        converted = ImageCms.profileToProfile(
+            image, source_profile, ImageCms.createProfile("sRGB"), outputMode=image.mode
+        )
+        assert converted is not None  # only None with inPlace=True
+        image = converted
     image.info.clear()  # Pillow would otherwise write the ICC profile and EXIF back
     if resize != 1.0:
         image = image.resize((int(image.width * resize), int(image.height * resize)))
@@ -59,12 +74,13 @@ def _reencode_like_tinify(
     if drop_alpha or fully_opaque:  # Tinify drops an alpha channel that hides nothing
         image = image.convert("RGB")
     buf = io.BytesIO()
+    options = {"icc_profile": icc_profile} if keep_icc_profile and icc_profile else {}
     if fmt == "JPEG":
-        image.save(buf, format="JPEG", quality=80, progressive=True)
+        image.save(buf, format="JPEG", quality=80, progressive=True, **options)
     elif fmt == "PNG":
-        image.quantize(16).save(buf, format="PNG")
+        image.quantize(16).save(buf, format="PNG", **options)
     else:
-        image.save(buf, format=fmt)
+        image.save(buf, format=fmt, **options)
     return buf.getvalue()
 
 
@@ -74,6 +90,8 @@ def _fake_tinify(
     output: bytes | None = None,
     apply_orientation: bool = True,
     transpose: Image.Transpose | None = None,
+    convert_colors: bool = True,
+    keep_icc_profile: bool = False,
 ):
     """Patch tinify so the compressed result is the input re-encoded without metadata, or `output`."""
     mock = MagicMock()
@@ -83,7 +101,7 @@ def _fake_tinify(
         source = MagicMock()
         if output is None:
             source.to_buffer.return_value = _reencode_like_tinify(
-                data, resize, drop_alpha, apply_orientation, transpose
+                data, resize, drop_alpha, apply_orientation, transpose, convert_colors, keep_icc_profile
             )
         else:
             source.to_buffer.return_value = output
@@ -103,9 +121,11 @@ def _compress(
     output: bytes | None = None,
     apply_orientation: bool = True,
     transpose: Image.Transpose | None = None,
+    convert_colors: bool = True,
+    keep_icc_profile: bool = False,
 ) -> dict:
     """Run compress-image --json and return the metadata diff."""
-    with _fake_tinify(resize, drop_alpha, output, apply_orientation, transpose):
+    with _fake_tinify(resize, drop_alpha, output, apply_orientation, transpose, convert_colors, keep_icc_profile):
         result = runner.invoke(
             app,
             ["compress-image", str(src), "--output", str(out), "--api-key", "test-key", "--json", *args],
@@ -194,10 +214,10 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
         },
         "color_profile": {
             "key": "color_profile",
-            "before": "DCI-P3 D65 Gamut with sRGB Transfer",
-            "after": "DCI-P3 D65 Gamut with sRGB Transfer",
+            "before": P3_PROFILE,
+            "after": None,
             "source": "ICC_Profile:ProfileDescription",
-            "status": "same",
+            "status": "lost",
         },
         "transparency": {"key": "transparency", "before": False, "after": False, "source": "pixels", "status": "same"},
     }
@@ -206,7 +226,6 @@ def test_s23_photo_keeps_its_important_fields(tmp_path: Path):
 def test_s23_photo_has_no_unexpected_loss(tmp_path: Path):
     metadata = _compress(S23_PHOTO, tmp_path / "out.jpg")
     assert metadata["unexpected_losses"] == []
-    assert metadata["after"]["ICC_Profile:ProfileDescription"] == "DCI-P3 D65 Gamut with sRGB Transfer"
     assert metadata["after"]["IFD0:ImageWidth"] == 4000
 
 
@@ -318,6 +337,106 @@ def test_stdin_has_no_mtime_to_fall_back_to(tmp_path: Path):
     assert capture_date == {"key": "capture_date", "before": None, "after": None, "source": None, "status": "absent"}
 
 
+# --- Colours -------------------------------------------------------------------
+
+
+def test_s23_photo_converted_to_srgb_by_tinify_gets_no_p3_profile(tmp_path: Path):
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg")
+    assert not any(tag.startswith("ICC") for tag in metadata["after"])
+    assert _expected(metadata)["ICC_Profile:ProfileDescription"] == {
+        "tag": "ICC_Profile:ProfileDescription",
+        "before": P3_PROFILE,
+        "reason": COLORS_CONVERTED_REASON,
+    }
+    assert {
+        loss["reason"] for loss in metadata["expected_losses"] if loss["tag"].startswith(("ICC_Profile:", "ICC-"))
+    } == {COLORS_CONVERTED_REASON}
+
+
+def test_s23_photo_colours_not_converted_by_tinify_keep_the_p3_profile(tmp_path: Path):
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg", convert_colors=False)
+    assert metadata["unexpected_losses"] == []
+    assert _important(metadata)["color_profile"]["status"] == "same"
+    assert "ICC_Profile:ProfileDescription" not in _expected(metadata)
+
+
+def test_p3_profile_on_pixels_converted_to_srgb_is_an_unexpected_colour_change(tmp_path: Path):
+    """The bug of #6: a P3 profile on sRGB pixels, displayed oversaturated. Here Tinify itself would keep it."""
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg", keep_icc_profile=True)
+    assert {"tag": "pixels:colors", "kind": "changed", "before": P3_PROFILE, "after": P3_PROFILE} in metadata[
+        "unexpected_losses"
+    ]
+    assert _important(metadata)["color_profile"]["status"] == "same"  # the tags alone can't tell
+
+
+def test_p3_profile_copied_back_onto_converted_pixels_is_an_unexpected_colour_change():
+    """The bug of #6 as the diff sees it, which the command can no longer reach: same tags, colours changed."""
+    tags = {"ICC_Profile:ProfileDescription": P3_PROFILE}
+    metadata = diff_metadata(tags, tags, [], transparency=(False, False), same_colors=False)
+    assert metadata["unexpected_losses"] == [
+        {"tag": "pixels:colors", "kind": "changed", "before": P3_PROFILE, "after": P3_PROFILE}
+    ]
+
+
+def test_strip_of_a_photo_converted_to_srgb_has_no_unexpected_loss(tmp_path: Path):
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg", "--metadata", "strip")
+    assert metadata["unexpected_losses"] == []
+
+
+def test_strip_of_a_photo_tinify_did_not_convert_changes_its_colours(tmp_path: Path):
+    """Without its profile, a viewer reads the P3 pixels as sRGB: the colours are duller."""
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg", "--metadata", "strip", convert_colors=False)
+    assert {"tag": "pixels:colors", "kind": "changed", "before": P3_PROFILE, "after": None} in metadata[
+        "unexpected_losses"
+    ]
+
+
+def test_srgb_profile_which_converts_nothing_is_copied_back(tmp_path: Path):
+    """Pixels converted from sRGB to sRGB can't be told from the original's: its profile is kept, as any other tag."""
+    src = tmp_path / "photo.jpg"
+    srgb_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    with Image.open(S23_PHOTO) as photo:
+        photo.resize((400, 300)).save(src, format="JPEG", quality=95, icc_profile=srgb_profile)
+    metadata = _compress(src, tmp_path / "out.jpg")
+    assert metadata["unexpected_losses"] == []
+    assert _important(metadata)["color_profile"]["status"] == "same"
+
+
+def _p3_avif(tmp_path: Path) -> Path:
+    """A small AVIF of the S23 photo, with its P3 profile."""
+    src = tmp_path / "photo.avif"
+    with Image.open(S23_PHOTO) as photo:
+        photo.resize((400, 300)).save(src, format="AVIF", icc_profile=photo.info["icc_profile"], quality=90)
+    return src
+
+
+def test_avif_converted_to_srgb_loses_its_profile_as_expected(tmp_path: Path):
+    """exiftool can't write an ICC profile into an AVIF: once Tinify converted the colours, there is none to write."""
+    metadata = _compress(_p3_avif(tmp_path), tmp_path / "out.avif")
+    assert metadata["unexpected_losses"] == []
+    expected = _expected(metadata)
+    assert expected["ICC_Profile:ProfileDescription"]["reason"] == COLORS_CONVERTED_REASON
+    assert expected["QuickTime:ColorPrimaries"] == {
+        "tag": "QuickTime:ColorPrimaries",
+        "before": "Unspecified",
+        "reason": COLORS_CONVERTED_REASON,
+    }
+
+
+def test_avif_profile_exiftool_cannot_write_back_is_an_unexpected_loss(tmp_path: Path):
+    """Colours left in P3 by Tinify need the profile, which exiftool can't write into an AVIF."""
+    metadata = _compress(_p3_avif(tmp_path), tmp_path / "out.avif", convert_colors=False)
+    unexpected = {loss["tag"]: loss for loss in metadata["unexpected_losses"]}
+    assert unexpected["ICC_Profile:ProfileDescription"]["kind"] == "removed"
+    assert unexpected["pixels:colors"] == {
+        "tag": "pixels:colors",
+        "kind": "changed",
+        "before": P3_PROFILE,
+        "after": None,
+    }
+    assert _important(metadata)["color_profile"]["status"] == "lost"
+
+
 # --- Changed values -----------------------------------------------------------
 
 
@@ -327,21 +446,6 @@ def test_changed_dimensions_are_an_unexpected_change(tmp_path: Path):
     dimensions = _important(metadata)["dimensions"]
     assert dimensions["status"] == "changed"
     assert dimensions["after"] == {"width": 160, "height": 100}
-
-
-def test_icc_profile_exiftool_cannot_write_back_is_an_unexpected_removal(tmp_path: Path):
-    """exiftool can't write an ICC profile into an AVIF: the real Tinify loses it, and so does the fake."""
-    src = tmp_path / "photo.avif"
-    icc_profile = Image.open(S23_PHOTO).info["icc_profile"]
-    Image.open(SCREENSHOT).convert("RGB").save(src, format="AVIF", icc_profile=icc_profile)
-    metadata = _compress(src, tmp_path / "out.avif")
-    assert {
-        "tag": "ICC_Profile:ProfileDescription",
-        "kind": "removed",
-        "before": "DCI-P3 D65 Gamut with sRGB Transfer",
-        "after": None,
-    } in metadata["unexpected_losses"]
-    assert _important(metadata)["color_profile"]["status"] == "lost"
 
 
 # --- Transparency -------------------------------------------------------------

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import Result
-from PIL import Image, ImageOps
+from PIL import Image, ImageCms, ImageOps
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
@@ -54,8 +54,16 @@ MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
 
 def _reencode_like_tinify(data: bytes) -> bytes:
-    """Re-encode the pixels without any metadata nor trailer, as Tinify does, with the orientation applied to them."""
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+    """Re-encode the pixels without any metadata nor trailer, as Tinify does, with the orientation applied to them and
+    the colours converted to sRGB with their ICC profile."""
+    image = Image.open(io.BytesIO(data))
+    icc_profile = image.info.get("icc_profile")
+    image = ImageOps.exif_transpose(image)
+    if icc_profile:
+        source_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+        converted = ImageCms.profileToProfile(image, source_profile, ImageCms.createProfile("sRGB"), outputMode="RGB")
+        assert converted is not None  # only None with inPlace=True
+        image = converted
     image.info.clear()
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=80)
@@ -400,6 +408,14 @@ def test_s23_motion_photo_turned_by_tinify_is_not_turned_twice(tmp_path: Path):
     dimensions = {field["key"]: field for field in metadata["important"]}["dimensions"]
     assert (dimensions["before"], dimensions["status"]) == ({"width": 3000, "height": 4000}, "same")
     assert metadata["unexpected_losses"] == []
+
+
+def test_s23_motion_photo_converted_to_srgb_by_tinify_gets_no_p3_profile(tmp_path: Path):
+    result, _ = _invoke(S23_MOTION_PHOTO, tmp_path / "out.jpg", "--allow-motion-photo-loss", reencode=True)
+    metadata = json.loads(result.stdout)["result"]["metadata"]
+    assert "ICC_Profile:ProfileDescription" not in metadata["after"]
+    expected = {loss["tag"]: loss["reason"] for loss in metadata["expected_losses"]}
+    assert expected["ICC_Profile:ProfileDescription"] == "couleurs converties en sRGB par Tinify (gamut réduit)"
 
 
 def test_xmp_other_than_the_motion_photo_is_kept(tmp_path: Path):

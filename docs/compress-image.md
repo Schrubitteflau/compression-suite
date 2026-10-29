@@ -60,7 +60,7 @@ Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no 
 - **ThumbnailImage**: the EXIF thumbnail shows the original image, it is removed on purpose
 - **Compression**: belongs to the thumbnail
 
-This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS, the colour profile (e.g. the S23's "DCI-P3 D65") and all other tags. The orientation is kept unless Tinify already applied it (see below). What can't be kept is listed in the metadata diff below.
+This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS and all other tags. The orientation is kept unless Tinify already applied it, and the colour profile unless Tinify converted the colours to sRGB (see below). What can't be kept is listed in the metadata diff below.
 
 ### Orientation
 
@@ -73,9 +73,17 @@ So with `--metadata=keep`, when the original has an orientation other than norma
 
 Otherwise (pixels as stored, pixels that can't be told apart, or an image Pillow can't decode), the orientation is copied back like any other tag; an output then displayed otherwise is reported (`pixels:orientation`, below).
 
+### Colours
+
+Tinify converts the colours to sRGB with the ICC profile, and returns no profile: the P3 pixels of a S23 photo ("DCI-P3 D65 Gamut with sRGB Transfer") come back in sRGB, for a JPEG, PNG, WebP or AVIF (seen on real calls). Copied back, the P3 profile would make a viewer that manages colours read these sRGB pixels as P3: oversaturated, redder colours. The conversion to sRGB, reduced gamut included, is accepted.
+
+So with `--metadata=keep`, when the original has an ICC profile, `compress-image` compares the compressed pixels, converted to sRGB with their own profile if any, with the original's, converted to sRGB with its profile and read as sRGB without it (on small RGB copies, `utils/colors.py`). When they show the original's colours converted, and the original read as sRGB does not, the profile is not copied back: the output is in sRGB, without profile. Its loss, the `ICC*` groups, is expected, with the reason « couleurs converties en sRGB par Tinify (gamut réduit) »; in an AVIF, so is the sRGB declared by Tinify in place of unspecified primaries and transfer (`QuickTime:ColorPrimaries`, `QuickTime:TransferCharacteristics`).
+
+Otherwise (colours left as they were, a profile close to sRGB that converts nothing, or an image Pillow can't decode), the profile is copied back like any other tag; colours then displayed otherwise are reported (`pixels:colors`, below).
+
 ### `--metadata=strip`
 
-The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande", except a change of dimensions or a lost transparency, which are never expected.
+The Tinify API output is used as-is, with no metadata preservation. Only file-level attributes remain (dimensions, encoding process, color space). The metadata diff is still produced: every loss is expected, with the reason "métadonnées retirées à la demande", except a change of dimensions, a lost transparency, or an output displayed otherwise (picture or colours), which are never expected.
 
 ### Metadata diff (`--json`)
 
@@ -85,7 +93,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 {
   "important": [
     {"key": "capture_date", "before": "2024:06:15 12:00:00", "after": "2024:06:15 12:00:00", "source": "ExifIFD:DateTimeOriginal", "status": "same"},
-    {"key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": "DCI-P3 D65 Gamut with sRGB Transfer", "source": "ICC_Profile:ProfileDescription", "status": "same"}
+    {"key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": null, "source": "ICC_Profile:ProfileDescription", "status": "lost"}
   ],
   "unexpected_losses": [{"tag": "PNG:ImageWidth", "kind": "changed", "before": 320, "after": 160}],
   "expected_losses": [{"tag": "Samsung:TimeStamp", "before": "2024:06:15 12:00:00.918+02:00", "reason": "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"}],
@@ -102,16 +110,17 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - `camera`: `{make, model}`
   - `dimensions`: `{width, height}` as displayed, orientation applied: a portrait stored 4000×3000 with `Rotate 90 CW` is `{width: 3000, height: 4000}`
   - `orientation`
-  - `color_profile`: description of the ICC profile, `null` if none
+  - `color_profile`: description of the ICC profile, `null` if none. `lost` when Tinify converted the colours to sRGB: the colours themselves are checked on the pixels (`pixels:colors`)
   - `transparency`: whether at least one pixel is not fully opaque, read on the pixels decoded by Pillow (`source: "pixels"`), for every format. `before` or `after` is `null`, and `status` is `unverified`, when Pillow can't decode that file. `lost` means a real transparency disappeared
 - **`expected_losses`** (`tag`, `before`, `reason`): losses decided by compression-suite, declared in `compress_image/main.py` next to the exiftool exclusions:
   - the EXIF thumbnail (`IFD1:*`) and its `Compression`
   - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
   - when Tinify applied the orientation to the pixels, the orientation and the stored size tags rewritten (see [Orientation](#orientation)), with the reason « orientation appliquée aux pixels »
+  - when Tinify converted the colours to sRGB, the ICC profile (`ICC*` groups) and, in an AVIF, its sRGB primaries and transfer (see [Colours](#colours)), with the reason « couleurs converties en sRGB par Tinify (gamut réduit) »
   - the stored width and height (`File:ImageWidth`…) swapped with each other by a quarter turn of the pixels, the displayed dimensions kept, with the reason « pixels pivotés selon l'orientation : l'image affichée garde ses dimensions »
-- **Never expected**, whatever `--metadata`: a change of the dimensions as displayed (each file's dimensions turned by its own orientation), an output a viewer displays otherwise than the original, and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
-- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). A real transparency lost, or that couldn't be checked, is also listed under the synthetic tag `pixels:transparency` (`kind: "removed"` or `"unverified"`, `before`/`after` as in the `transparency` field), since an output can keep its alpha tags with every pixel made opaque. An original known to be opaque gives no such entry. An original with an orientation other than normal whose output a viewer displays otherwise (turned or mirrored, each with its own orientation: an orientation applied twice, for instance) is listed under the synthetic tag `pixels:orientation` (`kind: "changed"`, `before`/`after` the orientation of each file); this is read on the pixels, since a mirror applied twice changes no dimension. In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF loses it.
+- **Never expected**, whatever `--metadata`: a change of the dimensions as displayed (each file's dimensions turned by its own orientation), an output a viewer displays otherwise than the original (picture or colours), and a change of the alpha tags (`PNG:ColorType`, `PNG:Transparency`, `RIFF:WebP_Flags`, `RIFF:Alpha*`, `QuickTime:AuxiliaryImageType`) unless the original is known to be opaque or the output known to be transparent. Tinify drops the alpha channel of an image without any transparent pixel, such as a gnome-screenshot capture: that is re-encoding. A real transparency lost, or one that couldn't be checked, is not.
+- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`kind: "removed"`, `after: null`) or whose value changed (`kind: "changed"`). A real transparency lost, or that couldn't be checked, is also listed under the synthetic tag `pixels:transparency` (`kind: "removed"` or `"unverified"`, `before`/`after` as in the `transparency` field), since an output can keep its alpha tags with every pixel made opaque. An original known to be opaque gives no such entry. An original with an orientation other than normal whose output a viewer displays otherwise (turned or mirrored, each with its own orientation: an orientation applied twice, for instance) is listed under the synthetic tag `pixels:orientation` (`kind: "changed"`, `before`/`after` the orientation of each file); this is read on the pixels, since a mirror applied twice changes no dimension. An output whose colours, converted to sRGB with its own profile (read as sRGB without one), differ from the original's converted the same way by more than the noise of compression (1.5/255 on the mean of a channel) is listed under the synthetic tag `pixels:colors` (`kind: "changed"`, `before`/`after` the profile description of each file, `null` if none): a P3 profile on pixels already converted to sRGB, for instance, which the tags alone can't show. The conversion to sRGB itself is not a change. It is checked whenever either file has a profile, `--metadata=strip` included, unless the output shows another picture than the original's. In human mode, their tags are printed on stderr. Known case: exiftool can't write an ICC profile into an AVIF, so a P3 AVIF whose colours Tinify left in P3 loses it (an unexpected loss, with `pixels:colors`); once converted to sRGB, it needs none.
 - **`added`** (`tag`, `after`): tags that appear after the compression, for information.
 - Binary values are compared on exiftool's summary (`(Binary data N bytes…)`).
 

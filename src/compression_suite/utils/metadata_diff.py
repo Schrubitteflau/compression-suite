@@ -48,7 +48,7 @@ ALPHA_TAGS = (
     "QuickTime:AuxiliaryImageType",
 )
 
-# The transparency and the picture displayed are read on the decoded pixels, not in the tags.
+# The transparency, the picture displayed and its colours are read on the decoded pixels, not in the tags.
 PIXELS_SOURCE = "pixels"
 TRANSPARENCY_SOURCE = PIXELS_SOURCE
 
@@ -57,6 +57,11 @@ TRANSPARENCY_TAG = f"{PIXELS_SOURCE}:transparency"
 
 # Synthetic tag of an output a viewer displays otherwise than the original (turned or mirrored), read on the pixels.
 ORIENTATION_TAG = f"{PIXELS_SOURCE}:orientation"
+
+# Synthetic tag of an output a viewer displays with other colours than the original, each converted to sRGB with its own
+# profile (a P3 profile on pixels already converted to sRGB, for instance), read on the pixels.
+COLORS_TAG = f"{PIXELS_SOURCE}:colors"
+COLOR_PROFILE_TAG = "ICC_Profile:ProfileDescription"
 
 MTIME_SOURCE = "file_mtime"
 
@@ -134,7 +139,7 @@ IMPORTANT_FIELDS = (
     ),
     DIMENSIONS_FIELD,
     ImportantField("orientation", ORIENTATION_TAGS),
-    ImportantField("color_profile", ("ICC_Profile:ProfileDescription",)),
+    ImportantField("color_profile", (COLOR_PROFILE_TAG,)),
 )
 
 
@@ -329,13 +334,15 @@ def diff_metadata(
     transparency: tuple[bool | None, bool | None],
     mtimes: tuple[str, str] | None = None,
     same_picture: bool | None = None,
+    same_colors: bool | None = None,
 ) -> dict[str, Any]:
     """Classify the differences between the tags of the original (`before`) and of its processed copy (`after`).
 
     `transparency` tells, for both files, whether a pixel is not fully opaque (`pixel_transparency`).
     `mtimes` are the ISO 8601 mtimes of both files, the capture date of last resort. Leave it out when the
     original's mtime is unknown (stdin). `same_picture` tells whether a viewer displays the copy as the original
-    (`same_displayed_picture`), None when it wasn't checked.
+    (`same_displayed_picture`), None when it wasn't checked. `same_colors` tells whether it displays it with the same
+    colours (`same_colors`), None when it wasn't checked.
     """
     expected, unexpected = [], []
     never_expected = _never_expected_tags(transparency, _swapped_dimension_tags(before, after))
@@ -355,6 +362,15 @@ def diff_metadata(
     if same_picture is False:
         unexpected.append(
             {"tag": ORIENTATION_TAG, "kind": "changed", "before": orientation(before), "after": orientation(after)}
+        )
+    if same_colors is False:
+        unexpected.append(
+            {
+                "tag": COLORS_TAG,
+                "kind": "changed",
+                "before": before.get(COLOR_PROFILE_TAG),
+                "after": after.get(COLOR_PROFILE_TAG),
+            }
         )
     return {
         "important": _important_fields(before, after, mtimes, transparency),

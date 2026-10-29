@@ -15,6 +15,7 @@ from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
 
+from compression_suite.utils.colors import colors_converted, has_icc_profile, same_colors
 from compression_suite.utils.config import resolve_api_key
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.decoding import check_decodable
@@ -37,6 +38,10 @@ from compression_suite.utils.orientation import (
 from compression_suite.utils.pinned_tools import resolve_tool
 
 T = TypeVar("T")
+
+# Whether a viewer displays the output as the original: the same picture (orientation), the same colours. None when
+# not checked.
+PixelChecks = tuple[bool | None, bool | None]
 
 HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 
@@ -133,9 +138,25 @@ ORIENTATION_APPLIED_LOSSES = [
     ExpectedLoss(tag, ORIENTATION_REASON) for tag in (*ORIENTATION_TAGS, *STORED_WIDTH_TAGS, *STORED_HEIGHT_TAGS)
 ]
 
+COLORS_CONVERTED_REASON = "couleurs converties en sRGB par Tinify (gamut réduit)"
+
+# Losses of an image whose colours Tinify converted to sRGB with its ICC profile (a P3 photo): copied back, the profile
+# would make a viewer read the sRGB pixels as P3, oversaturated. The output is left in sRGB, without profile. exiftool
+# names the groups of the profile's parts ICC_Profile, ICC-header, ICC-meas... In an AVIF, Tinify declares the sRGB
+# primaries and transfer instead of unspecified ones (seen on a real call).
+COLORS_CONVERTED_LOSSES = [
+    ExpectedLoss("ICC*:*", COLORS_CONVERTED_REASON, excluded_tag="ICC_Profile"),
+    ExpectedLoss("QuickTime:ColorPrimaries", COLORS_CONVERTED_REASON),
+    ExpectedLoss("QuickTime:TransferCharacteristics", COLORS_CONVERTED_REASON),
+]
+
+EXIFTOOL_COLORS_CONVERTED_EXCLUDE_TAGS = [
+    f"-{loss.excluded_tag}=" for loss in COLORS_CONVERTED_LOSSES if loss.excluded_tag
+]
+
 # Tags that -all:all doesn't copy and must be listed explicitly (ICC_Profile and the IFD0 dimensions are
-# "unsafe" for exiftool: without them, the colour profile of a P3 photo would be lost). Without XMPToolkit,
-# exiftool would name itself as the toolkit of the XMP it rewrites.
+# "unsafe" for exiftool: without them, the colour profile of a P3 photo whose colours Tinify left as they were would
+# be lost). Without XMPToolkit, exiftool would name itself as the toolkit of the XMP it rewrites.
 EXIFTOOL_EXTRA_TAGS = [
     "-InteropIndex",
     "-InteropVersion",
@@ -379,29 +400,40 @@ def compress_image(
         orientation_args = applied_orientation_tags(original_tags, compressed_buffer) if pixels_turned else []
         if pixels_turned:
             expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
+        # Only a profile can have converted the colours; with --metadata strip, no profile is copied back
+        colors_args = []
+        if (
+            metadata == "keep"
+            and has_icc_profile(exiftool_source)
+            and colors_converted(exiftool_source, compressed_buffer)
+        ):
+            colors_args = EXIFTOOL_COLORS_CONVERTED_EXCLUDE_TAGS
+            expected_losses = COLORS_CONVERTED_LOSSES + expected_losses
 
-        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None, bool | None]:
-            """Copy the metadata, read the final bytes, tags, transparency and whether it is displayed as the original,
-            then give the file the original's dates.
+        def apply_metadata_and_dates(compressed_path: Path) -> tuple[bytes, dict[str, Any], bool | None, PixelChecks]:
+            """Copy the metadata, read the final bytes, tags, transparency and whether it is displayed as the original
+            (picture and colours), then give the file the original's dates.
 
             The dates come last: exiftool rewrites the file, and reading it refreshes its atime. Only an oriented
-            original is checked for how it is displayed: without orientation, nothing can turn it.
+            original is checked for how it is displayed: without orientation, nothing can turn it. The colours of
+            another picture than the original's (turned, mirrored) are not compared.
             """
             if metadata == "keep":
                 preserve_metadata(
-                    exiftool, exiftool_source, compressed_path, motion_photo_exclusions + orientation_args
+                    exiftool, exiftool_source, compressed_path, motion_photo_exclusions + orientation_args + colors_args
                 )
             final_buffer = compressed_path.read_bytes()
             final_tags = read_metadata(exiftool, compressed_path)
             final_transparency = pixel_transparency(compressed_path)
             same_picture = same_displayed_picture(exiftool_source, compressed_path) if oriented else None
+            colors = same_colors(exiftool_source, compressed_path) if same_picture is not False else None
             if original_stat is not None:
                 os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-            return final_buffer, final_tags, final_transparency, same_picture
+            return final_buffer, final_tags, final_transparency, (same_picture, colors)
 
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
-            final_buffer, final_tags, final_transparency, same_picture = write_atomically(
+            final_buffer, final_tags, final_transparency, (same_picture, colors) = write_atomically(
                 output_path,
                 compressed_buffer,
                 apply_metadata_and_dates,
@@ -410,7 +442,9 @@ def compress_image(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
                 tmp_compressed.write_bytes(compressed_buffer)
-                final_buffer, final_tags, final_transparency, same_picture = apply_metadata_and_dates(tmp_compressed)
+                final_buffer, final_tags, final_transparency, (same_picture, colors) = apply_metadata_and_dates(
+                    tmp_compressed
+                )
             sys.stdout.buffer.write(final_buffer)
 
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
@@ -422,6 +456,7 @@ def compress_image(
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
         same_picture=same_picture,
+        same_colors=colors,
     )
 
     output_size = len(final_buffer)
