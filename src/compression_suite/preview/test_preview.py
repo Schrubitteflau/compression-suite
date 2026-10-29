@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pillow_heif
+import pytest
 from click.testing import Result
 from PIL import Image
 from typer.testing import CliRunner
@@ -49,12 +50,14 @@ def _preview(path: Path, output: Path, *args: str) -> dict:
     return document["result"]
 
 
-def _error(result: Result, exit_code: int, code: str) -> dict:
-    """Check a failure's exit code and error code, and return its `error`."""
+def _assert_error(result: Result, code: str, exit_code: int) -> dict:
+    """Check a failure's envelope, error code and exit code, and return its `error`."""
     assert result.exit_code == exit_code, result.output
-    error = json.loads(result.stdout)["error"]
-    assert error["code"] == code
-    return error
+    document = json.loads(result.stdout)
+    assert document["ok"] is False
+    assert document["command"] == "preview"
+    assert document["error"]["code"] == code
+    return document["error"]
 
 
 def _close_to(pixel: tuple[int, ...], color: tuple[int, int, int]) -> bool:
@@ -120,6 +123,12 @@ def test_heic_with_alpha_is_flattened(tmp_path: Path):
         assert jpeg.mode == "RGB"
 
 
+def test_heic_named_like_a_jpeg_is_converted(tmp_path: Path):
+    path = tmp_path / "photo.jpg"
+    path.write_bytes(ORIENTED_P3_HEIC.read_bytes())
+    assert _preview(path, tmp_path / "preview.jpg")["width"] == 32
+
+
 def test_original_heic_is_unchanged(tmp_path: Path):
     heic = _copy(ORIENTED_P3_HEIC, tmp_path)
     _preview(heic, tmp_path / "preview.jpg")
@@ -145,35 +154,36 @@ def test_existing_output_is_replaced_with_overwrite(tmp_path: Path):
 
 def test_jpeg_is_unsupported_format(tmp_path: Path):
     output = tmp_path / "preview.jpg"
-    error = _error(_invoke(_copy(S23_PHOTO, tmp_path), output), 21, "unsupported_format")
+    error = _assert_error(_invoke(_copy(S23_PHOTO, tmp_path), output), "unsupported_format", 21)
     assert error["details"] == {"detected_format": "jpeg"}
     assert not output.exists()
-
-
-def test_heic_named_like_a_jpeg_is_converted(tmp_path: Path):
-    path = tmp_path / "photo.jpg"
-    path.write_bytes(ORIENTED_P3_HEIC.read_bytes())
-    assert _preview(path, tmp_path / "preview.jpg")["width"] == 32
 
 
 def test_existing_output_is_output_exists(tmp_path: Path):
     output = tmp_path / "preview.jpg"
     output.write_bytes(b"old")
-    _error(_invoke(_copy(ORIENTED_P3_HEIC, tmp_path), output), 24, "output_exists")
+    _assert_error(_invoke(_copy(ORIENTED_P3_HEIC, tmp_path), output), "output_exists", 24)
     assert output.read_bytes() == b"old"
 
 
 def test_output_directory_is_output_exists(tmp_path: Path):
-    _error(_invoke(_copy(ORIENTED_P3_HEIC, tmp_path), tmp_path, "--overwrite"), 24, "output_exists")
+    _assert_error(_invoke(_copy(ORIENTED_P3_HEIC, tmp_path), tmp_path, "--overwrite"), "output_exists", 24)
 
 
 def test_missing_input_is_input_not_found(tmp_path: Path):
-    _error(_invoke(tmp_path / "missing.heic", tmp_path / "preview.jpg"), 23, "input_not_found")
+    _assert_error(_invoke(tmp_path / "missing.heic", tmp_path / "preview.jpg"), "input_not_found", 23)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_unreadable_input_is_input_unreadable(tmp_path: Path):
+    heic = _copy(ORIENTED_P3_HEIC, tmp_path)
+    heic.chmod(0)
+    _assert_error(_invoke(heic, tmp_path / "preview.jpg"), "input_unreadable", 26)
 
 
 def test_missing_output_option_is_a_json_usage_error(tmp_path: Path):
     result = runner.invoke(app, ["preview", str(_copy(ORIENTED_P3_HEIC, tmp_path)), "--json"])
-    _error(result, 2, "usage_error")
+    _assert_error(result, "usage_error", 2)
 
 
 # --- Human-readable output ------------------------------------------------------

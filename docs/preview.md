@@ -61,4 +61,9 @@ The JPEG is written atomically: a reader never sees it half-written.
 
 An Apple HDR photo (an auxiliary image `urn:com:apple:photo:2020:aux:hdrgainmap`) gives its SDR base image: the gain map is ignored, like every auxiliary image (depth, mattes). A 10 or 12-bit image is brought down to 8 bits.
 
-**Known limit**: no automated test covers it. pillow-heif can't write an auxiliary image, so no HEIC with a gain map can be fabricated, and real ones (photos of other people, with GPS) can't be versioned. It was checked by hand on real iPhone HEICs with a gain map, among them "Rotate 90 CW", "Mirror vertical" and "Mirror horizontal and rotate 270 CW", with Display P3, Apple Wide Color Sharing or no profile: each one converted at full resolution, upright, with its profile, and left unchanged.
+**Known limit**: no automated test covers it. pillow-heif can't write an auxiliary image, so no HEIC with a gain map can be fabricated, and real ones (photos of other people, with GPS) can't be versioned. It was checked by hand on real iPhone HEICs with a gain map, among them "Rotate 90 CW", "Mirror vertical" and "Mirror horizontal and rotate 270 CW", with Display P3, Apple Wide Color Sharing or no profile: each one converted at full resolution, upright, with its profile, and left unchanged. None of them is tagged with a PQ curve (`exiftool -if '$ProfileDescription =~ /PQ/'` finds nothing in the sources): that case was not checked.
+
+## Other limits
+
+- **Colours described by `nclx` only**: a HEIC without an ICC profile gives a JPEG without one, which a browser shows as sRGB. The real iPhone HEIC without a profile at hand has an `nclx` box with unspecified primaries, so sRGB is the right reading. A HEIC whose `nclx` box declares other primaries (P3, BT.2020) would lose them: none was found in the sources.
+- **Damaged HEIC**: a file detected as HEIC that libheif can't decode (truncated, for instance) fails with `internal_error` (exit 50), the decoder's message in `message`.

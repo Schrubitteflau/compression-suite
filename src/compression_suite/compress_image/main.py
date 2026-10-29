@@ -137,13 +137,24 @@ def validate_input_file(path: str) -> Path:
     return p
 
 
-def check_format(detected_format: str) -> None:
-    """Reject any format Tinify can't compress."""
-    if detected_format not in SUPPORTED_FORMATS:
+def check_format(detected_format: str, supported_formats: tuple[str, ...] = SUPPORTED_FORMATS) -> None:
+    """Reject any format the command can't handle: by default, those Tinify can't compress."""
+    if detected_format not in supported_formats:
         raise CommandError(
             ErrorCode.UNSUPPORTED_FORMAT,
-            f"Unsupported format: {detected_format} (supported: {', '.join(SUPPORTED_FORMATS)})",
+            f"Unsupported format: {detected_format} (supported: {', '.join(supported_formats)})",
             {"detected_format": detected_format},
+        )
+
+
+def check_output(output_path: Path, overwrite: bool) -> None:
+    """Refuse to write over a folder, or over an existing file without `--overwrite`."""
+    if output_path.is_dir():
+        raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output_path}.")
+    if output_path.exists() and not overwrite:
+        raise CommandError(
+            ErrorCode.OUTPUT_EXISTS,
+            f"Output file already exists: {output_path}. Use --overwrite to replace.",
         )
 
 
@@ -318,13 +329,8 @@ def compress_image(
         expected_losses = (MOTION_PHOTO_LOSSES if motion_photo["detected"] else []) + EXPECTED_LOSSES
 
         output_path = Path(output) if output is not None else None
-        if output_path is not None and output_path.is_dir():
-            raise CommandError(ErrorCode.OUTPUT_EXISTS, f"Output path is a directory: {output}.")
-        if output_path is not None and output_path.exists() and not overwrite:
-            raise CommandError(
-                ErrorCode.OUTPUT_EXISTS,
-                f"Output file already exists: {output}. Use --overwrite to replace.",
-            )
+        if output_path is not None:
+            check_output(output_path, overwrite)
 
         # tinify declares `key = None  # type: Optional[str]`, a type comment ty does not read
         tinify.key = resolve_api_key(api_key)  # ty: ignore[invalid-assignment]

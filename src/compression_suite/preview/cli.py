@@ -4,7 +4,7 @@ from typing import Any
 
 import typer
 
-from compression_suite.preview.main import preview as write_preview
+from compression_suite.preview.main import write_preview
 from compression_suite.utils.cli import stderr_console
 from compression_suite.utils.contract import run_command
 
