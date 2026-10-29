@@ -35,7 +35,7 @@ compression_suite compress-image photo.jpg --output compressed.jpg --json
 compression_suite compress-image photo.jpg --output compressed.jpg --api-key=OTHER_KEY
 ```
 
-The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when set). No environment variable is read, and the key never appears in any output. A configuration file readable by the group or the others gives a warning on stderr.
+The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when set to an absolute path). An empty `--api-key` (an unset variable in `--api-key="$KEY"`) is a missing key: the file is not used instead. No other environment variable is read, and the key never appears in any output. A configuration file readable by the group or the others gives a warning on stderr.
 
 ## Options
 
@@ -178,7 +178,7 @@ Exit codes are the same with or without `--json`.
 | `tinify_unavailable` | 10 | Tinify server error or network failure | |
 | `api_key_invalid` | 11 | Key rejected, Tinify client error | |
 | `quota_exceeded` | 12 | Monthly API quota exceeded | |
-| `api_key_missing` | 13 | No `--api-key`, and no usable `tinify_api_key` in the configuration file (absent, unreadable, invalid TOML, empty) | `config_path` |
+| `api_key_missing` | 13 | Empty `--api-key`, or none and no usable `tinify_api_key` in the configuration file (absent, unreadable, invalid TOML, empty) | `config_path` |
 | `motion_photo` | 20 | Motion photo detected without `--allow-motion-photo-loss` | `signals` |
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |

@@ -19,7 +19,10 @@ def compress_image(
     input_file: Optional[str] = typer.Argument(None, help="Path to input image file (omit to read from stdin)"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Path to output file (omit to write to stdout)"),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key", help="Tinify API key (default: tinify_api_key in ~/.config/compression-suite/config.toml)",
+        None,
+        "--api-key",
+        help="Tinify API key (default: tinify_api_key in $XDG_CONFIG_HOME/compression-suite/config.toml, "
+        "~/.config by default)",
     ),
     metadata: MetadataMode = typer.Option(MetadataMode.KEEP, "--metadata", help="Metadata handling: 'keep' (preserve via exiftool) or 'strip'"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file if it exists"),

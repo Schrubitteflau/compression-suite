@@ -32,6 +32,7 @@ def config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 def _write_config(config_home: Path, content: str, mode: int = 0o600) -> Path:
+    """Write compression-suite's configuration file in `config_home`, with these permissions."""
     path = config_home / "compression-suite" / "config.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -40,6 +41,7 @@ def _write_config(config_home: Path, content: str, mode: int = 0o600) -> Path:
 
 
 def _jpeg(tmp_path: Path) -> Path:
+    """A small JPEG to compress."""
     path = tmp_path / "photo.jpg"
     buf = io.BytesIO()
     Image.new("RGB", (32, 24), (53, 132, 228)).save(buf, format="JPEG")
@@ -93,7 +95,9 @@ def test_configuration_folder_defaults_to_home_config(monkeypatch: pytest.Monkey
     assert fake.key == FILE_KEY
 
 
-@pytest.mark.parametrize("content", [None, "", 'other = "x"\n', 'tinify_api_key = ""\n', "tinify_api_key = 42\n"])
+@pytest.mark.parametrize(
+    "content", [None, "", 'other = "x"\n', 'tinify_api_key = ""\n', 'tinify_api_key = "  "\n', "tinify_api_key = 42\n"],
+)
 def test_no_key_is_api_key_missing_before_tinify(config_home: Path, tmp_path: Path, content: str | None):
     if content is not None:
         _write_config(config_home, content)
@@ -106,6 +110,29 @@ def test_no_key_is_api_key_missing_before_tinify(config_home: Path, tmp_path: Pa
     assert expected_path in error["message"]
     assert not fake.from_file.called
     assert not (tmp_path / "out.jpg").exists()
+
+
+@pytest.mark.parametrize("flag", ["", "  "])
+def test_empty_api_key_flag_is_api_key_missing(config_home: Path, tmp_path: Path, flag: str):
+    _write_config(config_home, f'tinify_api_key = "{FILE_KEY}"\n')  # not used: the flag was given, empty
+    result, fake = _compress(tmp_path, "--api-key", flag)
+    assert result.exit_code == 13, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "api_key_missing"
+    assert "--api-key" in error["message"]
+    assert not fake.from_file.called
+
+
+def test_relative_xdg_config_home_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative")
+    _write_config(tmp_path / "relative", 'tinify_api_key = "relative-key"\n')
+    _write_config(home / ".config", f'tinify_api_key = "{FILE_KEY}"\n')
+    result, fake = _compress(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert fake.key == FILE_KEY
 
 
 def test_existing_output_is_reported_before_a_missing_key(config_home: Path, tmp_path: Path):
