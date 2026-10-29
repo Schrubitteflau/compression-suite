@@ -25,7 +25,7 @@ cat photo.jpg | compression_suite compress-image --metadata=strip > compressed.j
 # Override the 15MB safety limit
 compression_suite compress-image huge.png --output out.png --disable-hard-limit
 
-# Compress a motion photo anyway, losing its video
+# Compress a motion photo whose video can't be kept anyway, losing its video
 compression_suite compress-image motion.jpg --output out.jpg --allow-motion-photo-loss
 
 # Machine-readable output (one JSON document on stdout, --output is required)
@@ -47,7 +47,7 @@ The key comes from `--api-key` if given, else from `tinify_api_key` in `~/.confi
 | `--metadata` | `keep` | `keep` (preserve via exiftool) or `strip` |
 | `--overwrite` | `false` | Overwrite output file if it exists |
 | `--disable-hard-limit` | `false` | Bypass the 15MB input size limit |
-| `--allow-motion-photo-loss` | `false` | Compress a motion photo anyway, losing its video |
+| `--allow-motion-photo-loss` | `false` | Compress a motion photo whose video can't be kept anyway, losing its video |
 | `--json` | `false` | Write a single JSON document on stdout (requires `--output`) |
 | `--verbose`, `-v` | `false` | Enable verbose logging |
 
@@ -60,7 +60,13 @@ Tinify keeps no metadata at all: no EXIF, no ICC profile, no PNG text block, no 
 - **ThumbnailImage**: the EXIF thumbnail shows the original image, it is removed on purpose
 - **Compression**: belongs to the thumbnail
 
-This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS and all other tags. The orientation is kept unless Tinify already applied it, and the colour profile unless Tinify converted the colours to sRGB (see below). What can't be kept is listed in the metadata diff below.
+This preserves camera info (Make, Model, ISO, Exposure, etc.), dates, GPS and all other tags. The orientation is kept unless Tinify already applied it, and the colour profile unless Tinify converted the colours to sRGB (see below). The Samsung trailer is appended back (see below). What can't be kept is listed in the metadata diff below.
+
+### Samsung trailer (`SEFT`)
+
+Samsung phones append a zone after the JPEG image (`SEFT`, read by `utils/seft.py`): named entries (`Image_UTC_Data`, `MCC_Data`, `Color_Display_P3`, `MotionPhoto_Data` for the video of a motion photo…), then their index. Tinify drops it, and exiftool can't write it. So with `--metadata=keep`, `compress-image` appends the original's zone, from its first entry to the end of the file, in one block, right after the compressed image: `compressed + original[zone.start:]`. The index counts its entries back from itself, so no offset changes. The zone is appended **before** the exiftool copy, which keeps it byte for byte. Its fields (`Samsung:TimeStamp`, `Samsung:MCCData`, `Samsung:EmbeddedVideo*`…) are thus kept.
+
+The compressed file must end with its image: when anything follows it (a zone of its own, other bytes), no zone is appended, and its fields are reported as unexpected losses. With `--metadata=strip`, no zone is appended: it carries the operator's country (`MCC_Data`), a UTC timestamp and, for a motion photo, the video, which may show more than the photo.
 
 ### Orientation
 
@@ -98,7 +104,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
     {"key": "color_profile", "before": "DCI-P3 D65 Gamut with sRGB Transfer", "after": null, "source": "ICC_Profile:ProfileDescription", "status": "lost"}
   ],
   "unexpected_losses": [{"tag": "PNG:ImageWidth", "kind": "changed", "before": 320, "after": 160}],
-  "expected_losses": [{"tag": "Samsung:TimeStamp", "before": "2024:06:15 12:00:00.918+02:00", "reason": "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"}],
+  "expected_losses": [{"tag": "IFD1:ThumbnailImage", "before": "(Binary data 46956 bytes, use -b option to extract)", "reason": "miniature EXIF retirée exprès : elle montrerait l'image d'origine"}],
   "added": [{"tag": "JFIF:JFIFVersion", "after": 1.01}],
   "before": {"IFD0:Make": "samsung", "...": "..."},
   "after": {"IFD0:Make": "samsung", "...": "..."}
@@ -116,7 +122,7 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
   - `transparency`: whether at least one pixel is not fully opaque, read on the pixels decoded by Pillow (`source: "pixels"`), for every format. `before` or `after` is `null`, and `status` is `unverified`, when Pillow can't decode that file. `lost` means a real transparency disappeared
 - **`expected_losses`** (`tag`, `before`, `reason`): losses decided by compression-suite, declared in `compress_image/main.py` next to the exiftool exclusions:
   - the EXIF thumbnail (`IFD1:*`) and its `Compression`
-  - the fields of the Samsung end-of-file trailer (the `Samsung:` tags of exiftool's `Samsung::Trailer` table, read in the `SEFT` zone), which Tinify drops and exiftool can't write. Samsung's EXIF maker notes share the `Samsung` group but are copied back, so their loss stays unexpected
+  - when the loss of a motion photo is allowed, the XMP declaring its video, the video and the fields of the Samsung trailer (see [Motion photos](#motion-photos)), with the reason « photo animée : perte autorisée »
   - the encoding parameters Tinify chooses anew ("réencodage"): every `File` field but the dimensions, and the PNG and AVIF encoding fields (bit depth, colour type, palette…)
   - when Tinify applied the orientation to the pixels, the orientation and the stored size tags rewritten (see [Orientation](#orientation)), with the reason « orientation appliquée aux pixels »
   - when Tinify converted the colours to sRGB, the ICC profile (`ICC*` groups) and, in an AVIF, its sRGB primaries and transfer (see [Colours](#colours)), with the reason « couleurs converties en sRGB par Tinify (gamut réduit) »
@@ -128,9 +134,17 @@ The Tinify API output is used as-is, with no metadata preservation. Only file-le
 
 ## Motion photos
 
-A motion photo carries a short video after its image. Tinify only returns the image, so `compress-image` detects a motion photo **before** calling Tinify and refuses it (`motion_photo`, exit 20) without using a credit. `details.signals` lists every signal found; one is enough to refuse.
+A motion photo carries a short video after its image. Tinify only returns the image, so `compress-image` detects a motion photo **before** calling Tinify.
 
-`--allow-motion-photo-loss` compresses it anyway. The XMP declaring the video (`XMP-GCamera:MotionPhoto*`, `XMP-GCamera:MicroVideo*`, `Container:Directory`) is then not copied back, so the compressed file no longer claims a video it doesn't have; the rest of the XMP is kept. These tags, the video itself (`Google:MotionPhotoVideo`, `Samsung:EmbeddedVideo*`) and the XMP toolkit when nothing else remained in the XMP (copied back otherwise) are expected losses, with the reason « photo animée : perte autorisée ».
+**A Samsung motion photo keeps its video** with `--metadata=keep`, without any flag: its video lies in the `SEFT` zone, appended back after the compressed image (see [Samsung trailer](#samsung-trailer-seft)). This takes a Samsung motion photo (`samsung_motion_photo_data`) without `trailing_data`, whose zone starts right at the end of its image: every byte after the image is then appended back, and the video stays at the same distance from the end of the image and from the end of the file. A Galaxy S23 also writes the Google XMP, whose `Container:Directory` counts from both: it is copied back as is, and still points to the video. A S23 motion photo of 9.4 MB comes out at 5.9 MB, the video not being re-encoded. The output is still a motion photo, with the same signals: it compresses again.
+
+**Any other motion photo is refused** (`motion_photo`, exit 20) without using a credit: a Google motion photo without `SEFT` zone, a file with `trailing_data`, and any motion photo with `--metadata=strip`. `details.signals` lists every signal found; one is enough to refuse.
+
+`--allow-motion-photo-loss` compresses these anyway, losing the video. It allows a loss, it doesn't ask for one: a Samsung motion photo whose video can be kept keeps it. When the video is lost, the XMP declaring it (`XMP-GCamera:MotionPhoto*`, `XMP-GCamera:MicroVideo*`, `Container:Directory`) is not copied back, so the compressed file no longer claims a video it doesn't have; the rest of the XMP is kept. No `SEFT` zone is appended. These tags, the video itself (`Google:MotionPhotoVideo`), the fields of the Samsung trailer (`Samsung:EmbeddedVideo*`, `Samsung:TimeStamp`…) and the XMP toolkit when nothing else remained in the XMP (copied back otherwise) are expected losses, with the reason « photo animée : perte autorisée ».
+
+When the zone of a Samsung motion photo can't be appended after the compressed image (something follows it), the video is lost without having been allowed: the XMP declaring it is not copied back either, and every loss is unexpected.
+
+`result.motion_photo.video_kept` tells whether the output kept the video: `true` when the zone was appended, `false` when the video was lost, `null` without a motion photo.
 
 The detector (`utils/motion_photo.py`, shared with [`inspect`](inspect.md)) looks for these signals, in this order:
 
@@ -175,14 +189,14 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
   "result": {
     "input": {"path": "photo.jpg", "format": "jpeg", "size_bytes": 2481152, "mtime": "2022-08-09T10:11:12.654321+00:00"},
     "output": {"path": "compressed.jpg", "format": "jpeg", "size_bytes": 812345, "mtime": "2022-08-09T10:11:12.654321+00:00"},
-    "motion_photo": {"detected": false, "signals": []},
+    "motion_photo": {"detected": false, "signals": [], "video_kept": null},
     "tinify": {"compressions_this_month": 42},
     "metadata": {"important": [], "unexpected_losses": [], "expected_losses": [], "added": [], "before": {}, "after": {}}
   }
 }
 ```
 
-`metadata` is the metadata diff described above. `motion_photo` is the detector's result: `detected` is `true` only when the loss was allowed with `--allow-motion-photo-loss`. `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
+`metadata` is the metadata diff described above. `motion_photo` is the detector's result (`detected`, `signals`), plus `video_kept`: `true` when the video was kept, `false` when it was lost with `--allow-motion-photo-loss`, `null` without a motion photo (see [Motion photos](#motion-photos)). `mtime` is ISO 8601 in UTC. `input.path` and `input.mtime` are `null` when reading from stdin; `output.mtime` is then the date the output was written. On failure:
 
 ```json
 {
@@ -209,7 +223,7 @@ Exit codes are the same with or without `--json`.
 | `api_key_invalid` | 11 | Key rejected, Tinify client error | |
 | `quota_exceeded` | 12 | Monthly API quota exceeded | |
 | `api_key_missing` | 13 | Empty `--api-key`, or none and no usable `tinify_api_key` in the configuration file (absent, unreadable, invalid TOML, empty) | `config_path` |
-| `motion_photo` | 20 | Motion photo detected without `--allow-motion-photo-loss` | `signals` |
+| `motion_photo` | 20 | Motion photo whose video can't be kept, without `--allow-motion-photo-loss` | `signals` |
 | `unsupported_format` | 21 | Detected format is not JPEG, PNG, WebP or AVIF | `detected_format` |
 | `file_too_large` | 22 | Input > 15MB without `--disable-hard-limit` | `size_bytes`, `limit_bytes` |
 | `input_not_found` | 23 | Input missing or not a file | |

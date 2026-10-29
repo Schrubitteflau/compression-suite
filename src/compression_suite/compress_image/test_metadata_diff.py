@@ -26,7 +26,6 @@ SAMPLES = Path(__file__).resolve().parent / "samples"
 S23_PHOTO = SAMPLES / "s23_p3_seft.jpg"
 SCREENSHOT = SAMPLES / "screenshot.png"
 
-SAMSUNG_TRAILER_REASON = "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"
 STRIP_REASON = "métadonnées retirées à la demande"
 COLORS_CONVERTED_REASON = "couleurs converties en sRGB par Tinify (gamut réduit)"
 P3_PROFILE = "DCI-P3 D65 Gamut with sRGB Transfer"
@@ -229,18 +228,12 @@ def test_s23_photo_has_no_unexpected_loss(tmp_path: Path):
     assert metadata["after"]["IFD0:ImageWidth"] == 4000
 
 
-def test_s23_samsung_trailer_fields_are_expected_losses(tmp_path: Path):
-    expected = _expected(_compress(S23_PHOTO, tmp_path / "out.jpg"))
-    assert expected["Samsung:TimeStamp"] == {
-        "tag": "Samsung:TimeStamp",
-        "before": "2024:06:15 12:00:00.918+02:00",
-        "reason": SAMSUNG_TRAILER_REASON,
-    }
-    assert expected["Samsung:MCCData"] == {
-        "tag": "Samsung:MCCData",
-        "before": "France (208)",
-        "reason": SAMSUNG_TRAILER_REASON,
-    }
+def test_s23_samsung_trailer_fields_are_kept(tmp_path: Path):
+    """Tinify drops the `SEFT` zone: it is appended back after the compressed image."""
+    metadata = _compress(S23_PHOTO, tmp_path / "out.jpg")
+    assert metadata["after"]["Samsung:TimeStamp"] == "2024:06:15 12:00:00.918+02:00"
+    assert metadata["after"]["Samsung:MCCData"] == "France (208)"
+    assert not any(tag.startswith("Samsung:") for tag in _expected(metadata))
 
 
 def test_exif_thumbnail_is_an_expected_loss(tmp_path: Path):

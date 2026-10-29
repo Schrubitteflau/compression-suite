@@ -73,6 +73,12 @@ def _trailer_signals(data: FileBytes) -> list[str]:
     return signals
 
 
+def image_end(data: FileBytes) -> int | None:
+    """Where the image ends, or None if the format or the file can't tell."""
+    image = _image_end(data)
+    return image[0] if image is not None else None
+
+
 def _image_end(data: FileBytes) -> tuple[int, list[Span]] | None:
     """Where the image ends and the images declared to follow it, or None if the format or the file can't tell."""
     fmt = detect_format(data[:64])

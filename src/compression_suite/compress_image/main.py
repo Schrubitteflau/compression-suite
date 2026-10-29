@@ -27,7 +27,12 @@ from compression_suite.utils.metadata_diff import (
     pixel_transparency,
     read_metadata,
 )
-from compression_suite.utils.motion_photo import detect_motion_photo
+from compression_suite.utils.motion_photo import (
+    SAMSUNG_MOTION_PHOTO_DATA,
+    TRAILING_DATA,
+    detect_motion_photo,
+    image_end,
+)
 from compression_suite.utils.orientation import (
     ORIENTATION_TAGS,
     is_oriented,
@@ -36,6 +41,7 @@ from compression_suite.utils.orientation import (
     stored_size,
 )
 from compression_suite.utils.pinned_tools import resolve_tool
+from compression_suite.utils.seft import SeftError, SeftZone, read_seft
 
 T = TypeVar("T")
 
@@ -44,11 +50,11 @@ HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 SUPPORTED_FORMATS = ("jpeg", "png", "webp", "avif")
 
 THUMBNAIL_REASON = "miniature EXIF retirée exprès : elle montrerait l'image d'origine"
-SAMSUNG_TRAILER_REASON = "zone Samsung de fin de fichier : retirée par Tinify, exiftool ne sait pas la réécrire"
 STRIP_REASON = "métadonnées retirées à la demande"
 
-# Tags of exiftool's Samsung::Trailer table, read in the SEFT trailer. Their group, `Samsung`, is also the one
-# of Samsung's EXIF maker notes, which are copied back: `Samsung:*` would hide their loss.
+# Tags of exiftool's Samsung::Trailer table, read in the SEFT trailer, which is appended back after the compressed
+# image (see zone_to_append). Their group, `Samsung`, is also the one of Samsung's EXIF maker notes, which are copied
+# back: `Samsung:*` would hide their loss.
 SAMSUNG_TRAILER_TAGS = (
     "DepthMapData",
     "DepthMapData2",
@@ -84,7 +90,6 @@ EXPECTED_LOSSES = [
     ExpectedLoss("IFD1:ThumbnailImage", THUMBNAIL_REASON, excluded_tag="ThumbnailImage"),
     ExpectedLoss("IFD1:Compression", "propre à la miniature EXIF, retirée avec elle", excluded_tag="Compression"),
     ExpectedLoss("IFD1:*", THUMBNAIL_REASON),  # size, offset and length of the removed thumbnail
-    *(ExpectedLoss(f"Samsung:{tag}", SAMSUNG_TRAILER_REASON) for tag in SAMSUNG_TRAILER_TAGS),
     # Encoding parameters outside the File group, which Tinify chooses anew
     *(
         ExpectedLoss(tag, REENCODING_REASON)
@@ -108,16 +113,16 @@ EXIFTOOL_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in EXPECTED_LOSSES if
 
 MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
-# Losses of a motion photo compressed with --allow-motion-photo-loss, which come before EXPECTED_LOSSES (the Samsung
-# video entry is also a trailer field). The XMP declaring the video is not copied back: the compressed file would
-# still claim a video it no longer has. Its toolkit, copied back with the rest, is dropped if nothing else remains.
+# Losses of a motion photo compressed with --allow-motion-photo-loss, losing its video. The XMP declaring the video is
+# not copied back: the compressed file would still claim a video it no longer has. Its toolkit, copied back with the
+# rest, is dropped if nothing else remains. The SEFT trailer, the Samsung video's or not, is not appended back.
 MOTION_PHOTO_LOSSES = [
     ExpectedLoss("XMP-GCamera:MotionPhoto*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MotionPhoto*"),
     ExpectedLoss("XMP-GCamera:MicroVideo*", MOTION_PHOTO_REASON, excluded_tag="XMP-GCamera:MicroVideo*"),
     ExpectedLoss("XMP-GContainer:*", MOTION_PHOTO_REASON, excluded_tag="XMP-GContainer:all"),
     ExpectedLoss("XMP-x:XMPToolkit", MOTION_PHOTO_REASON),
     ExpectedLoss("Google:MotionPhotoVideo", MOTION_PHOTO_REASON),
-    ExpectedLoss("Samsung:EmbeddedVideo*", MOTION_PHOTO_REASON),
+    *(ExpectedLoss(f"Samsung:{tag}", MOTION_PHOTO_REASON) for tag in SAMSUNG_TRAILER_TAGS),
 ]
 
 EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in MOTION_PHOTO_LOSSES if loss.excluded_tag]
@@ -204,6 +209,36 @@ def check_size(size: int, disable_hard_limit: bool) -> None:
             f"Use --disable-hard-limit to override.",
             {"size_bytes": size, "limit_bytes": HARD_LIMIT_BYTES},
         )
+
+
+def zone_to_append(original: bytes, motion_photo: dict[str, Any], metadata: str) -> SeftZone | None:
+    """The original's Samsung trailer (`SEFT`), which Tinify drops, to append back after the compressed image, or None.
+
+    Only with `--metadata keep`: `strip` is for privacy, and the zone carries the operator's country, a UTC timestamp
+    and the video. A photo without video gets its zone back. A motion photo only when its zone holds the whole video:
+    a Samsung motion photo with nothing unexplained, whose zone starts right at the end of its image. Every byte after
+    the image is then appended back as is, so the video stays at the same distance from the end of the image and from
+    the end of the file: neither the zone's index nor the Google `Container:Directory` has an offset to change.
+    """
+    if metadata != "keep":
+        return None
+    try:
+        zone = read_seft(original)
+    except SeftError:
+        return None
+    if zone is None or not motion_photo["detected"]:
+        return zone
+    signals = motion_photo["signals"]
+    whole_video = SAMSUNG_MOTION_PHOTO_DATA in signals and TRAILING_DATA not in signals
+    return zone if whole_video and zone.start == image_end(original) else None
+
+
+def append_zone(compressed: bytes, original: bytes, zone: SeftZone) -> bytes | None:
+    """The compressed image followed by the original's zone, in one block, or None if the compressed file doesn't end
+    with its image (a zone of its own, other bytes): appended after them, the zone would not follow the image."""
+    if image_end(compressed) != len(compressed):
+        return None
+    return compressed + original[zone.start :]
 
 
 def check_motion_photo(motion_photo: dict[str, Any], allow_motion_photo_loss: bool) -> None:
@@ -334,7 +369,7 @@ def compress_image(
         metadata: "keep" to preserve metadata via exiftool, "strip" to discard.
         overwrite: Allow overwriting existing output file.
         disable_hard_limit: Bypass the 15MB hard limit.
-        allow_motion_photo_loss: Compress a motion photo anyway, losing its video.
+        allow_motion_photo_loss: Compress a motion photo whose video can't be kept anyway, losing its video.
         verbose: Enable verbose reporting.
 
     Returns:
@@ -376,10 +411,9 @@ def compress_image(
     with file_on_disk(original_path, original_buffer, f".{input_format}") as exiftool_source:
         original_tags = read_metadata(exiftool, exiftool_source)
         motion_photo = detect_motion_photo(original_buffer, original_tags)
-        check_motion_photo(motion_photo, allow_motion_photo_loss)
-        # Past the check, a motion photo is one whose loss is allowed
-        motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS if motion_photo["detected"] else []
-        expected_losses = (MOTION_PHOTO_LOSSES if motion_photo["detected"] else []) + EXPECTED_LOSSES
+        zone = zone_to_append(original_buffer, motion_photo, metadata)
+        # The video of a motion photo whose zone is appended back is kept: there is no loss to allow
+        check_motion_photo(motion_photo, allow_motion_photo_loss or zone is not None)
 
         output_path = Path(output) if output is not None else None
         if output_path is not None:
@@ -389,6 +423,17 @@ def compress_image(
         tinify.key = resolve_api_key(api_key)  # ty: ignore[invalid-assignment]
 
         compressed_buffer = call_tinify(prepare_source)
+
+        # Appended before the exiftool copy, which keeps the zone byte for byte
+        appended_buffer = append_zone(compressed_buffer, original_buffer, zone) if zone is not None else None
+        video_kept = motion_photo["detected"] and appended_buffer is not None
+        motion_photo_exclusions = []
+        expected_losses = EXPECTED_LOSSES
+        if motion_photo["detected"] and not video_kept:
+            motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS
+            # Past the check, without a zone, the loss was allowed. A zone that couldn't be appended is unexpected.
+            if zone is None:
+                expected_losses = MOTION_PHOTO_LOSSES + expected_losses
 
         # Only an oriented original can be turned twice; with --metadata strip, no orientation is copied back
         oriented = is_oriented(original_tags)
@@ -430,17 +475,18 @@ def compress_image(
                 os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
             return final_buffer, final_tags, final_transparency, same_picture, colors_kept
 
+        output_buffer = appended_buffer if appended_buffer is not None else compressed_buffer
         original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
             final_buffer, final_tags, final_transparency, same_picture, colors_kept = write_atomically(
                 output_path,
-                compressed_buffer,
+                output_buffer,
                 apply_metadata_and_dates,
             )
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_compressed = Path(tmpdir) / "compressed"
-                tmp_compressed.write_bytes(compressed_buffer)
+                tmp_compressed.write_bytes(output_buffer)
                 final_buffer, final_tags, final_transparency, same_picture, colors_kept = apply_metadata_and_dates(
                     tmp_compressed
                 )
@@ -484,7 +530,7 @@ def compress_image(
             "size_bytes": output_size,
             "mtime": output_mtime,
         },
-        "motion_photo": motion_photo,
+        "motion_photo": {**motion_photo, "video_kept": video_kept if motion_photo["detected"] else None},
         "tinify": {"compressions_this_month": compression_count},
         "metadata": metadata_diff,
     }
