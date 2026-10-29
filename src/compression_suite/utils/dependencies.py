@@ -4,6 +4,18 @@ import re
 import subprocess
 
 
+def read_version(command: list[str], pattern: str) -> str | None:
+    """Run a version command and return the first group of `pattern` in its stdout, or None if it can't be run or
+    its output isn't understood.
+    """
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(pattern, result.stdout.strip(), re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def parse_version_tuple(version_str: str) -> tuple[int, ...]:
     """Parse a version string like '1.4.6' or '11.88' into a tuple of ints."""
     return tuple(int(x) for x in version_str.split("."))

@@ -9,16 +9,17 @@ from compression_suite.utils.contract import run_command
 
 
 def _used_by(entry: dict[str, Any]) -> str:
+    """The commands relying on a tool, for a human."""
     return f"used by {', '.join(entry['used_by'])}" if entry["used_by"] else "used by no command"
 
 
-def _permissions(key: dict[str, Any]) -> str:
+def _permissions(key_report: dict[str, Any]) -> str:
     """The permissions line of the Tinify key file."""
-    if key["permissions_ok"] is None:
+    if key_report["permissions_ok"] is None:
         return "- (no configuration file)"
-    if key["permissions_ok"]:
+    if key_report["permissions_ok"]:
         return "ok (readable by you alone)"
-    return f"readable by other users. Run: chmod 600 {key['config_path']}"
+    return f"readable by other users. Run: chmod 600 {key_report['config_path']}"
 
 
 def print_report(report: dict[str, Any]) -> None:
@@ -35,13 +36,13 @@ def print_report(report: dict[str, Any]) -> None:
         found = f"{dependency['found_version'] or 'unknown version'} {dependency['path']}"
         state = found if dependency["status"] == "ok" else "missing"
         lines.append(f"  {dependency['name']}: {state}, {_used_by(dependency)}")
-    key = report["tinify_api_key"]
+    key_report = report["tinify_api_key"]
     lines += [
         "",
         "Tinify API key:",
-        f"  Configured: {'yes' if key['configured'] else 'no'}",
-        f"  Configuration file: {key['config_path']}",
-        f"  Permissions: {_permissions(key)}",
+        f"  Configured: {'yes' if key_report['configured'] else 'no'} (source: {key_report['source']})",
+        f"  Configuration file: {key_report['config_path']}",
+        f"  Permissions: {_permissions(key_report)}",
     ]
     typer.echo("\n".join(lines))
 

@@ -3,14 +3,13 @@
 The report never holds the key itself, only where it is looked for and whether the file is private.
 """
 
-import re
 import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import Any
 
 from compression_suite.utils.config import config_path, has_api_key, is_private
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.dependencies import read_version
 from compression_suite.utils.pinned_tools import (
     INSTALL_COMMAND,
     PinnedTool,
@@ -20,10 +19,10 @@ from compression_suite.utils.pinned_tools import (
 )
 
 # Commands relying on each external program; a pinned tool missing here is reported with no command.
-USED_BY: dict[str, list[str]] = {
-    "exiftool": ["compress-image", "inspect"],
-    "ffmpeg": ["extract-unique-frames", "reassemble-video"],
-    "jpegoptim": ["reduce-jpeg-size"],
+USED_BY: dict[str, tuple[str, ...]] = {
+    "exiftool": ("compress-image", "inspect"),
+    "ffmpeg": ("extract-unique-frames", "reassemble-video"),
+    "jpegoptim": ("reduce-jpeg-size",),
 }
 
 
@@ -34,7 +33,7 @@ class SystemDependency:
     name: str
     version_args: tuple[str, ...]
     version_pattern: str
-    used_by: list[str]
+    used_by: tuple[str, ...]
 
 
 SYSTEM_DEPENDENCIES = [
@@ -60,44 +59,36 @@ def pinned_tool_report(tool: PinnedTool) -> dict[str, Any]:
         "found_version": found_version,
         "path": str(executable),
         "status": status,
-        "used_by": USED_BY.get(tool.name, []),
+        "used_by": list(USED_BY.get(tool.name, ())),
     }
-
-
-def system_version(dependency: SystemDependency, executable: str) -> str | None:
-    """Run a system program to read its version, or None if it can't be run or its output isn't understood."""
-    try:
-        result = subprocess.run(
-            [executable, *dependency.version_args], capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    match = re.search(dependency.version_pattern, result.stdout + result.stderr, re.MULTILINE)
-    return match.group(1) if match else None
 
 
 def system_dependency_report(dependency: SystemDependency) -> dict[str, Any]:
     """The state of one system dependency, looked up in `PATH`: `ok` or `missing`."""
     executable = shutil.which(dependency.name)
+    found_version = None
+    if executable:
+        found_version = read_version([executable, *dependency.version_args], dependency.version_pattern)
     return {
         "name": dependency.name,
-        "found_version": system_version(dependency, executable) if executable else None,
+        "found_version": found_version,
         "path": executable,
         "status": "ok" if executable else "missing",
-        "used_by": dependency.used_by,
+        "used_by": list(dependency.used_by),
     }
 
 
 def tinify_key_report() -> dict[str, Any]:
     """Whether a Tinify key is configured and where it is looked for, never the key itself.
 
-    `permissions_ok` is None when the configuration file does not exist.
+    `permissions_ok` is None when the configuration file does not exist or can't be reached (a folder on its way
+    that the user can't cross): there are no permissions to judge, and the key counts as absent.
     """
     path = config_path()
     configured = has_api_key(path)
     try:
         permissions_ok = is_private(path)
-    except FileNotFoundError:
+    except OSError:
         permissions_ok = None
     return {
         "configured": configured,
@@ -119,7 +110,9 @@ def doctor_report() -> dict[str, Any]:
 def check_pinned_tools(report: dict[str, Any]) -> None:
     """Raise `tool_missing` if a pinned tool is not `ok`, carrying the whole report in its details.
 
-    A missing system dependency or Tinify key is not a failure: only the pinned tools are required.
+    The details also hold the `tool`, `expected_version` and `install_command` of every `tool_missing` error,
+    for the first failing tool. A missing system dependency or Tinify key is not a failure: only the pinned tools
+    are required.
     """
     failing = [tool for tool in report["pinned_tools"] if tool["status"] != "ok"]
     if failing:
@@ -127,5 +120,10 @@ def check_pinned_tools(report: dict[str, Any]) -> None:
         raise CommandError(
             ErrorCode.TOOL_MISSING,
             f"Pinned tools not usable: {names}. Install them with: {INSTALL_COMMAND}",
-            {**report, "install_command": INSTALL_COMMAND},
+            {
+                "tool": failing[0]["name"],
+                "expected_version": failing[0]["expected_version"],
+                "install_command": INSTALL_COMMAND,
+                **report,
+            },
         )

@@ -89,6 +89,8 @@ def test_missing_pinned_tool_fails_with_the_report(
     assert document["error"]["code"] == "tool_missing"
     assert "just install-tools" in document["error"]["message"]
     report = _report(result)
+    assert report["tool"] == "exiftool"
+    assert report["expected_version"] == EXIFTOOL_VERSION
     assert report["install_command"] == "just install-tools"
     exiftool = _by_name(report["pinned_tools"])["exiftool"]
     assert exiftool["status"] == "missing"
@@ -189,6 +191,18 @@ def test_key_readable_by_others_has_bad_permissions(config_home: Path, mode: int
     human = _invoke()
     assert f"chmod 600 {path}" in human.stdout
     assert KEY not in human.stdout + human.stderr
+
+
+def test_unreachable_configuration_folder_counts_as_no_key(config_home: Path):
+    path = _write_config(config_home, f'tinify_api_key = "{KEY}"\n')
+    path.parent.chmod(0o000)  # the file can't be reached, not even stat-ed
+    try:
+        result = _invoke("--json")
+    finally:
+        path.parent.chmod(0o700)
+    assert result.exit_code == 0, result.output
+    key = _report(result)["tinify_api_key"]
+    assert (key["configured"], key["source"], key["permissions_ok"]) == (False, "none", None)
 
 
 @pytest.mark.parametrize("content", ['tinify_api_key = ""\n', f'tinify_api_key = "{KEY}\n'])

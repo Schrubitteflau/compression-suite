@@ -14,9 +14,7 @@ its checkout (`uv run`, editable install), not from a wheel installed elsewhere.
 import hashlib
 import json
 import os
-import re
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
@@ -25,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.dependencies import read_version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_PATH = PROJECT_ROOT / "pinned-tools.json"
@@ -83,14 +82,7 @@ def expected_executable(tool: PinnedTool) -> Path:
 
 def installed_version(tool: PinnedTool, executable: Path) -> str | None:
     """Run the tool to read its version, or None if it can't be run or its output isn't understood."""
-    try:
-        result = subprocess.run(
-            [str(executable), *tool.version_args], capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    match = re.search(tool.version_pattern, result.stdout.strip(), re.MULTILINE)
-    return match.group(1) if match else None
+    return read_version([str(executable), *tool.version_args], tool.version_pattern)
 
 
 def is_installed(tool: PinnedTool, executable: Path) -> bool:
