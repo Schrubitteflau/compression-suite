@@ -91,14 +91,16 @@ def reduce_size(
                 reduction_pct = 1
                 if verbose:
                     console.print(
-                        f"[dim]Iteration {iterations}: {current_size:,} bytes (−{reduction_pct}% worked, resetting)[/dim]"
+                        f"[dim]Iteration {iterations}: {current_size:,} bytes "
+                        f"(−{reduction_pct}% worked, resetting)[/dim]"
                     )
             else:
                 # No progress — escalate reduction percentage
                 reduction_pct += 1
                 if verbose:
                     console.print(
-                        f"[dim]Iteration {iterations}: no progress at {target_pct}%, escalating to {100 - reduction_pct}%[/dim]"
+                        f"[dim]Iteration {iterations}: no progress at {target_pct}%, "
+                        f"escalating to {100 - reduction_pct}%[/dim]"
                     )
                 if reduction_pct > 50:
                     if verbose:

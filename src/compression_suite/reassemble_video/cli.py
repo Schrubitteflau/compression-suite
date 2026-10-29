@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
-from compression_suite.reassemble_video.main import main
+from compression_suite.reassemble_video.main import FrameMode, main
 from compression_suite.utils.cli import cli_error_handler
 
 console = Console()
@@ -77,7 +77,8 @@ def reassemble_video(
     if mode != "vfr" and mode != "cfr":
         console.print(f"[bold red]Error:[/bold red] Invalid mode '{mode}'. Must be 'vfr' or 'cfr'")
         raise typer.Exit(code=1)
+    frame_mode: FrameMode = "vfr" if mode == "vfr" else "cfr"
 
     logger.info(f"Reassembling video from: {frames_folder}")
-    main(frames_folder, output_file, audio_file, video_codec, crf, preset, mode, fps)
+    main(frames_folder, output_file, audio_file, video_codec, crf, preset, frame_mode, fps)
     console.print(f"\n[bold green]Success![/bold green] Video saved to: {output_file}")

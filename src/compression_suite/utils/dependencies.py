@@ -44,7 +44,7 @@ def check_jpegoptim(
             check=False,
         )
     except FileNotFoundError:
-        raise RuntimeError("Required tool not found: jpegoptim")
+        raise RuntimeError("Required tool not found: jpegoptim") from None
 
     match = re.search(r"jpegoptim v(\d+\.\d+\.\d+)", result.stdout + result.stderr)
     if not match:

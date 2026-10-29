@@ -137,16 +137,14 @@ def prepare_frames_cfr(
         unique_frame_path = temp_path / f"unique_{i:06d}.png"
         frame.save(unique_frame_path, format="PNG")
 
-        # Create references (first is the actual file, rest are symlinks)
-        for j in range(num_frames):
-            frame_path = temp_path / f"frame_{frame_counter:06d}.png"
-            if j == 0:
-                # First occurrence: rename the unique frame
-                os.rename(unique_frame_path, frame_path)
-                actual_frame_path = frame_path
-            else:
-                # Subsequent occurrences: create symlink
-                os.symlink(actual_frame_path, frame_path)
+        # First occurrence: rename the unique frame
+        actual_frame_path = temp_path / f"frame_{frame_counter:06d}.png"
+        os.rename(unique_frame_path, actual_frame_path)
+        frame_counter += 1
+
+        # Subsequent occurrences: symlinks to the first one
+        for _ in range(num_frames - 1):
+            os.symlink(actual_frame_path, temp_path / f"frame_{frame_counter:06d}.png")
             frame_counter += 1
 
         progress.update(task, advance=1)

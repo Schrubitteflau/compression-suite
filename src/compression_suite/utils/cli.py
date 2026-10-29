@@ -27,12 +27,12 @@ def cli_error_handler(func: Callable) -> Callable:
             raise
         except KeyboardInterrupt:
             stderr_console.print("\n[bold yellow]Interrupted by user[/bold yellow]")
-            raise typer.Exit(code=EXIT_INTERRUPT)
+            raise typer.Exit(code=EXIT_INTERRUPT) from None
         except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as e:
             stderr_console.print(f"[bold red]Error:[/bold red] {e}")
-            raise typer.Exit(code=EXIT_USER_ERROR)
+            raise typer.Exit(code=EXIT_USER_ERROR) from None
         except Exception as e:
             stderr_console.print(f"[bold red]Unexpected error:[/bold red] {e}")
-            raise typer.Exit(code=EXIT_USER_ERROR)
+            raise typer.Exit(code=EXIT_USER_ERROR) from None
 
     return wrapper

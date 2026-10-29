@@ -295,14 +295,19 @@ def compress_image(
         input_size = original_stat.st_size
         check_size(input_size, disable_hard_limit)
         original_buffer = original_path.read_bytes()
-        prepare_source = lambda: tinify.from_file(str(original_path))
+
+        def prepare_source() -> tinify.Source:
+            return tinify.from_file(str(original_path))
+
     else:
         original_buffer = sys.stdin.buffer.read()
         input_format = detect_format(original_buffer[:HEADER_SIZE])
         check_format(input_format)
         input_size = len(original_buffer)
         check_size(input_size, disable_hard_limit)
-        prepare_source = lambda: tinify.from_buffer(original_buffer)
+
+        def prepare_source() -> tinify.Source:
+            return tinify.from_buffer(original_buffer)
 
     with file_on_disk(original_path, original_buffer, f".{input_format}") as exiftool_source:
         original_tags = read_metadata(exiftool, exiftool_source)
@@ -321,7 +326,8 @@ def compress_image(
                 f"Output file already exists: {output}. Use --overwrite to replace.",
             )
 
-        tinify.key = resolve_api_key(api_key)
+        # tinify declares `key = None  # type: Optional[str]`, a type comment ty does not read
+        tinify.key = resolve_api_key(api_key)  # ty: ignore[invalid-assignment]
 
         compressed_buffer = call_tinify(prepare_source)
 

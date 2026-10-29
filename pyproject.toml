@@ -64,5 +64,9 @@ select = [
     "UP",  # pyupgrade
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer reads these defaults as parameter declarations; they are never shared mutable values (B008)
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [tool.uv]
 package = true
