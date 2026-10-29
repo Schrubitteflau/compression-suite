@@ -76,6 +76,11 @@ def install_dir(tool: PinnedTool, root: Path) -> Path:
     return root / f"{tool.name}-{tool.version}"
 
 
+def expected_executable(tool: PinnedTool) -> Path:
+    """Where the tool's executable is expected, whether it is installed or not."""
+    return install_dir(tool, tools_dir()) / tool.executable
+
+
 def installed_version(tool: PinnedTool, executable: Path) -> str | None:
     """Run the tool to read its version, or None if it can't be run or its output isn't understood."""
     try:
@@ -109,7 +114,7 @@ def resolve_tool(name: str) -> Path:
         CommandError: `tool_missing` if the tool is not installed, can't run, or has another version.
     """
     tool = load_manifest()[name]
-    executable = install_dir(tool, tools_dir()) / tool.executable
+    executable = expected_executable(tool)
     if not executable.is_file():
         raise tool_missing_error(tool, f"is not installed (expected at {executable})")
     version = installed_version(tool, executable)

@@ -50,25 +50,20 @@ def _api_key_missing(path: Path, reason: str) -> CommandError:
     )
 
 
-def read_api_key(path: Path) -> str:
-    """The key of the configuration file, warning on stderr if others can read it.
-
-    Raises `api_key_missing` when the file is absent, unreadable, not valid TOML or without a usable key. The
-    TOML error is not quoted: it could show a piece of the key.
-    """
+def _read_config(path: Path) -> bytes:
+    """The raw configuration file; raises `api_key_missing` when it is absent or unreadable."""
     try:
-        content = path.read_bytes()
+        return path.read_bytes()
     except FileNotFoundError:
         raise _api_key_missing(path, "the configuration file does not exist") from None
     except OSError as e:
         raise _api_key_missing(path, f"the configuration file can't be read ({e.strerror})") from None
-    if not is_private(path):
-        stderr_console.print(
-            f"[bold yellow]Warning:[/bold yellow] {path} is readable by other users, "
-            f"who can see your Tinify key. Run: chmod 600 {path}",
-            highlight=False,
-            soft_wrap=True,
-        )
+
+
+def _parse_api_key(path: Path, content: bytes) -> str:
+    """The key of the configuration file's content; raises `api_key_missing` when it is not valid TOML or has no
+    usable key. The TOML error is not quoted: it could show a piece of the key.
+    """
     try:
         config = tomllib.loads(content.decode())
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
@@ -77,6 +72,31 @@ def read_api_key(path: Path) -> str:
     if _is_blank(key):
         raise _api_key_missing(path, f"the configuration file has no non-empty `{API_KEY_FIELD}` string")
     return key
+
+
+def read_api_key(path: Path) -> str:
+    """The key of the configuration file, warning on stderr if others can read it.
+
+    Raises `api_key_missing` when the file is absent, unreadable, not valid TOML or without a usable key.
+    """
+    content = _read_config(path)
+    if not is_private(path):
+        stderr_console.print(
+            f"[bold yellow]Warning:[/bold yellow] {path} is readable by other users, "
+            f"who can see your Tinify key. Run: chmod 600 {path}",
+            highlight=False,
+            soft_wrap=True,
+        )
+    return _parse_api_key(path, content)
+
+
+def has_api_key(path: Path) -> bool:
+    """Whether the configuration file holds a usable key, silently: no warning, no error, never the key."""
+    try:
+        _parse_api_key(path, _read_config(path))
+    except CommandError:
+        return False
+    return True
 
 
 def resolve_api_key(api_key: str | None) -> str:
