@@ -1,4 +1,4 @@
-# Samples for the compress-image tests
+# Samples for the compress-image, inspect and preview tests
 
 The repo is public: no sample may carry personal data.
 
@@ -6,3 +6,4 @@ The repo is public: no sample may carry personal data.
 - `screenshot.png`: fabricated by `make_screenshot_png.py` (a real capture would show personal content), with the `Software` text block of gnome-screenshot plus a `Comment` block, and no date.
 - `s23_motion_photo.jpg`: real motion photo from a Galaxy S23, taken on purpose for the tests (neutral scene; its video has an audio track). It carries both formats at once: a `SEFT` trailer with `MotionPhoto_Data`, and the Google XMP (`GCamera:MotionPhoto=1`, version 1, `Container:Directory` pointing to the video). No GPS, serial number or owner. `ImageUniqueID` (`F50XLPE00VM`, repeated from one photo to the next: a device identifier) was rewritten to `00000000000` with exiftool, at the same length: only those bytes changed, and the `SEFT` index, the video and the `Container:Directory` offsets (counted from the end of the file) stay consistent.
 - `google_motion_photo.jpg`, `samsung_motion_photo.jpg`, `trailing_data.jpg`: fabricated by `make_motion_photo_samples.py`, one isolated case each: Google XMP with a tiny MP4 appended, `SEFT` trailer with a `MotionPhoto_Data` entry, and bytes after the image that no known structure explains.
+- `oriented_p3.heic`, `plain.heic`: fabricated by `make_heic_samples.py` (the real HEICs at hand are photos of other people, with GPS). `oriented_p3.heic` is laid out like an iPhone photo: orientation "Mirror horizontal and rotate 270 CW" (written as `irot` + `imir`) and the P3 ICC profile of `s23_p3_seft.jpg`; its pattern shows whether both the rotation and the mirror were applied. `plain.heic` has no ICC profile and no orientation. No HDR sample: pillow-heif can't write an Apple gain map.

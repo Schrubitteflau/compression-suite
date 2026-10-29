@@ -18,6 +18,7 @@ S23_PHOTO = SAMPLES / "s23_p3_seft.jpg"
 S23_MOTION_PHOTO = SAMPLES / "s23_motion_photo.jpg"
 SAMSUNG_MOTION_PHOTO = SAMPLES / "samsung_motion_photo.jpg"
 SCREENSHOT = SAMPLES / "screenshot.png"
+ORIENTED_P3_HEIC = SAMPLES / "oriented_p3.heic"
 
 IMPORTANT_KEYS = ["capture_date", "gps", "camera", "dimensions", "orientation", "color_profile", "transparency"]
 
@@ -121,6 +122,18 @@ def test_motion_photo_is_reported_without_failing(tmp_path: Path, sample: Path, 
     result = _inspect(_copy(sample, tmp_path))
     assert result["motion_photo"] == {"detected": True, "signals": signals}
     assert result["compressible"] is True  # its format is accepted; compress-image refuses it for its video
+
+
+def test_heic_is_described_but_not_compressible(tmp_path: Path):
+    result = _inspect(_copy(ORIENTED_P3_HEIC, tmp_path))
+    assert result["format"] == "heic"
+    assert result["mime_type"] == "image/heic"
+    assert result["compressible"] is False
+    assert result["motion_photo"] == {"detected": False, "signals": []}
+    important = _important(result)
+    assert important["orientation"]["value"] == "Mirror horizontal and rotate 270 CW"
+    assert important["color_profile"]["value"] == "DCI-P3 D65 Gamut with sRGB Transfer"
+    assert important["transparency"] == {"key": "transparency", "value": None, "source": None}  # Pillow can't decode it
 
 
 # --- Other files ----------------------------------------------------------------

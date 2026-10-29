@@ -18,6 +18,7 @@ dependencies = [
   "imagehash>=4.3.2",
   "numpy>=2.2.6",
   "pillow>=12.0.0",
+  "pillow-heif>=1.8.1",
   "pydantic>=2.12.4",
   "rich>=13.7.0",
   "tinify>=1.6.0",
