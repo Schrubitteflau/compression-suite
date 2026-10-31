@@ -27,7 +27,7 @@ def heic_to_jpeg(input_path: Path, detected_format: str) -> tuple[bytes, int, in
     try:
         image = decode_image(input_path, detected_format)
     except CorruptImageError as e:
-        raise corrupt_input_error(detected_format, str(e)) from e
+        raise corrupt_input_error(detected_format, e) from e
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")  # JPEG has no alpha
     buffer = io.BytesIO()

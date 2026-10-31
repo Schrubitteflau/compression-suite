@@ -54,7 +54,7 @@ The JPEG is written atomically: a reader never sees it half-written.
 | `unsupported_format` | 21 | format detected on the content other than HEIC or HEIF (`details.detected_format`); a `.jpg` that is really a HEIC is converted |
 | `input_not_found` | 23 | input missing, or not a file |
 | `input_unreadable` | 26 | input present but unreadable |
-| `input_corrupt` | 27 | HEIC or HEIF that libheif can't decode (truncated, for instance): `details.detected_format`, the decoder's message in `message`, nothing written |
+| `input_corrupt` | 27 | HEIC or HEIF that libheif can't decode, or whose image data runs past the end of the file (truncated, even with only some tiles of a grid photo missing, which libheif would fill in): `details.detected_format`, the reason in `message` (`Damaged heic file: file cut short, …` when libheif decoded it but data is missing), nothing written |
 | `output_exists` | 24 | output exists without `--overwrite`, or is a folder |
 | `usage_error` | 2 | invalid options, `--output` missing |
 

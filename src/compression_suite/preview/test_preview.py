@@ -17,6 +17,8 @@ runner = CliRunner()
 SAMPLES = Path(__file__).resolve().parents[1] / "compress_image" / "samples"
 ORIENTED_P3_HEIC = SAMPLES / "oriented_p3.heic"
 PLAIN_HEIC = SAMPLES / "plain.heic"
+TILED_HEIC = SAMPLES / "tiled.heic"
+OVER_LIMIT_HEIC = SAMPLES / "over_limit.heic"
 S23_PHOTO = SAMPLES / "s23_p3_seft.jpg"
 
 # 2022-08-09T10:11:12.654321Z, in nanoseconds
@@ -188,6 +190,50 @@ def test_truncated_heic_is_input_corrupt(tmp_path: Path, kept: float, decoder_me
     assert decoder_message in error["message"]
     assert not output.exists()
     assert [path.name for path in tmp_path.iterdir()] == ["truncated.heic"]  # no temporary file left either
+
+
+def test_tiled_heic_is_converted_whole(tmp_path: Path):
+    output = tmp_path / "preview.jpg"
+    result = _preview(_copy(TILED_HEIC, tmp_path), output)
+    assert (result["width"], result["height"]) == (1024, 768)
+
+
+def test_heic_cut_among_its_tiles_is_input_corrupt(tmp_path: Path):
+    # libheif would fill the missing tiles in, and the preview would show them green
+    data = TILED_HEIC.read_bytes()
+    heic = tmp_path / "truncated.heic"
+    heic.write_bytes(data[: len(data) // 2])
+    output = tmp_path / "preview.jpg"
+    error = _assert_error(_invoke(heic, output), "input_corrupt", 27)
+    assert error["details"] == {"detected_format": "heic"}
+    assert error["message"] == (
+        f"Damaged heic file: file cut short, its image data runs to byte {len(data)} but the file has {len(data) // 2}"
+    )
+    assert not output.exists()
+    assert [path.name for path in tmp_path.iterdir()] == ["truncated.heic"]
+
+
+def test_heic_cut_only_in_its_trailing_thumbnail_is_input_corrupt(tmp_path: Path):
+    data = TILED_HEIC.read_bytes()
+    cut = data[:-100]
+    # The thumbnail is stored last: the main image still decodes whole
+    assert pillow_heif.open_heif(cut).to_pillow().tobytes() == pillow_heif.open_heif(data).to_pillow().tobytes()
+    heic = tmp_path / "truncated.heic"
+    heic.write_bytes(cut)
+    output = tmp_path / "preview.jpg"
+    error = _assert_error(_invoke(heic, output), "input_corrupt", 27)
+    assert error["message"] == (
+        f"Damaged heic file: file cut short, its image data runs to byte {len(data)} but the file has {len(cut)}"
+    )
+    assert not output.exists()
+
+
+def test_heic_beyond_libheif_security_limits_is_input_corrupt(tmp_path: Path):
+    output = tmp_path / "preview.jpg"
+    error = _assert_error(_invoke(_copy(OVER_LIMIT_HEIC, tmp_path), output), "input_corrupt", 27)
+    assert error["details"] == {"detected_format": "heic"}
+    assert "Number of extents in iloc box (33) exceeds security limit (32)" in error["message"]
+    assert not output.exists()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
