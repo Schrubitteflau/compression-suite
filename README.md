@@ -39,7 +39,7 @@ uv sync
 just install-tools
 ```
 
-Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Pinned today: exiftool (used by `compress-image` and `inspect`), ffmpeg and ffprobe (used by `extract-unique-frames`, `reassemble-video` and `display-copy`). ffmpeg and ffprobe come from one archive, a month-end build of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (`linux64-gpl`, with libx264, libx265 and libopus), downloaded once (about 150 MB, 515 MB extracted). A missing pinned tool makes the command fail with `tool_missing` (exit code 30), naming the install command.
+Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Pinned today: exiftool (used by `compress-image` and `inspect`), ffmpeg (used by `display-copy`, `extract-unique-frames` and `reassemble-video`) and ffprobe (used by `display-copy` and `extract-unique-frames`). ffmpeg and ffprobe come from one archive, a month-end build of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (`linux64-gpl`, with libx264, libx265 and libopus), downloaded once (about 150 MB, 515 MB extracted). A missing pinned tool makes the command fail with `tool_missing` (exit code 30), naming the install command.
 
 4. Configure the Tinify API key (for `compress-image` only). Get one at https://tinypng.com/developers, then write it in compression-suite's configuration file, readable by you alone (see [Tinify API key](#tinify-api-key)):
 
@@ -55,7 +55,7 @@ echo 'tinify_api_key = "YOUR_KEY"' >> ~/.config/compression-suite/config.toml
 uv run compression_suite --help
 ```
 
-You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
+You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
 
 ### Tinify API key
 

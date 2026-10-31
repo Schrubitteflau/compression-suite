@@ -21,8 +21,8 @@ from compression_suite.utils.pinned_tools import (
 # Commands relying on each external program; a pinned tool missing here is reported with no command.
 USED_BY: dict[str, tuple[str, ...]] = {
     "exiftool": ("compress-image", "inspect"),
-    "ffmpeg": ("extract-unique-frames", "reassemble-video"),
-    "ffprobe": ("extract-unique-frames",),  # reads the video's dimensions, frame rate and duration
+    "ffmpeg": ("display-copy", "extract-unique-frames", "reassemble-video"),
+    "ffprobe": ("display-copy", "extract-unique-frames"),  # reads the video's streams, frame rate and duration
     "jpegoptim": ("reduce-jpeg-size",),
 }
 

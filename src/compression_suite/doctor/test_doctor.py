@@ -88,8 +88,8 @@ def test_nominal_run_reports_the_pinned_ffmpeg_and_ffprobe(config_home: Path):
         assert (tools[name]["expected_version"], tools[name]["found_version"]) == (FFMPEG_VERSION, FFMPEG_VERSION)
         assert tools[name]["status"] == "ok"
         assert Path(tools[name]["path"]).name == name
-    assert tools["ffmpeg"]["used_by"] == ["extract-unique-frames", "reassemble-video"]
-    assert tools["ffprobe"]["used_by"] == ["extract-unique-frames"]
+    assert tools["ffmpeg"]["used_by"] == ["display-copy", "extract-unique-frames", "reassemble-video"]
+    assert tools["ffprobe"]["used_by"] == ["display-copy", "extract-unique-frames"]
 
 
 def test_missing_pinned_tool_fails_with_the_report(

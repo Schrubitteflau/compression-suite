@@ -43,7 +43,7 @@ compression_suite doctor --json
         "found_version": "n9.0.2-17-g2a571b6068-20260930",
         "path": "/home/me/compression-suite/.tools/ffmpeg-n9.0.2-17-g2a571b6068-20260930/bin/ffmpeg",
         "status": "ok",
-        "used_by": ["extract-unique-frames", "reassemble-video"]
+        "used_by": ["display-copy", "extract-unique-frames", "reassemble-video"]
       },
       {
         "name": "ffprobe",
@@ -51,7 +51,7 @@ compression_suite doctor --json
         "found_version": "n9.0.2-17-g2a571b6068-20260930",
         "path": "/home/me/compression-suite/.tools/ffmpeg-n9.0.2-17-g2a571b6068-20260930/bin/ffprobe",
         "status": "ok",
-        "used_by": ["extract-unique-frames"]
+        "used_by": ["display-copy", "extract-unique-frames"]
       }
     ],
     "system_dependencies": [

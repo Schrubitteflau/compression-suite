@@ -11,6 +11,7 @@ from compression_suite.preview.cli import preview
 from compression_suite.reassemble_video.cli import reassemble_video
 from compression_suite.reduce_jpeg_size.cli import reduce_jpeg_size
 from compression_suite.utils.contract import JsonUsageErrorCommand
+from compression_suite.video_presets.cli import video_presets
 
 app = typer.Typer()
 
@@ -30,6 +31,7 @@ app.command(cls=JsonUsageErrorCommand)(inspect)
 app.command(cls=JsonUsageErrorCommand)(preview)
 app.command()(reassemble_video)
 app.command()(reduce_jpeg_size)
+app.command(cls=JsonUsageErrorCommand)(video_presets)
 
 
 if __name__ == "__main__":
