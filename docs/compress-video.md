@@ -4,19 +4,19 @@ Compress a whole video with a named preset (see [video-presets](video-presets.md
 
 The output is an MP4: HEVC video (x265) and Opus audio, or no audio for a preset without one (`dance`). Its definition, frame rate and the time of every frame are those of the original (a phone's variable frame rate included); only an odd width or height loses its last column or row. The metadata of the original are kept, the creation date, GPS and rotation among them, and the output gets the original's modification date.
 
-It runs the pinned ffmpeg, ffprobe and exiftool (see [doctor](doctor.md)), never those of the `PATH`, and needs no API key. Encoding takes time: about 3 times the video's duration for a 1080p phone video at the `default` preset.
+It runs the pinned ffmpeg, ffprobe and exiftool (see [doctor](doctor.md)), never those of the `PATH`, and needs no API key. Encoding takes time: at the `slow` speed of every preset, x265 encodes a 1080p video several times slower than it plays, so an export of a phone video takes longer than the video lasts.
 
 ## Usage
 
 ```bash
 # Readable progress bar and report on stderr
-compression_suite compress-video 20240601_120000.mp4 --preset default -o /tmp/20240601_120000.mp4
+compression_suite compress-video clip.mp4 --preset default -o /tmp/clip.mp4
 
 # Another CRF than the preset's own
 compression_suite compress-video lecture.mp4 --preset screen --crf 38 -o /tmp/lecture.mp4
 
 # Machine-readable output: the progress as JSON lines on stderr, one JSON document on stdout
-compression_suite compress-video 20240601_120000.mp4 --preset default -o /tmp/20240601_120000.mp4 --json
+compression_suite compress-video clip.mp4 --preset default -o /tmp/clip.mp4 --json
 ```
 
 ## Options
@@ -33,7 +33,7 @@ compression_suite compress-video 20240601_120000.mp4 --preset default -o /tmp/20
 ## What is encoded
 
 - The video stream: a source must hold exactly one, besides its cover arts (attached pictures, never encoded, even when one comes first). A source with two video streams is refused (`unsupported_format`).
-- Every audio stream, each encoded with the preset's audio settings (a preset without audio drops them all). Opus only takes some channel layouts: mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 and 7.1. A track in another layout is downmixed to the one keeping the most channels, with no more channels, and no more non-LFE channels, than it has: 4.0 gives quad, 2.1 stereo, hexagonal and 5.1(side) give 5.1. A track whose layout is unknown (PCM in a MOV) counts all its channels as non-LFE.
+- Every audio stream, each encoded with the preset's audio settings (a preset without audio drops them all). Opus only takes some channel layouts: mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 and 7.1. A track in another layout is downmixed to the one keeping the most channels, with no more channels, and no more non-LFE channels, than it has: 4.0 gives quad, 2.1 stereo, hexagonal and 5.1(side) give 5.1. The chosen layout may still hold a channel the track lacks: hexagonal, which has no LFE, gives 5.1 with an LFE channel left silent. A track whose layout is unknown (PCM in a MOV) counts all its channels as non-LFE.
 - Other streams are not kept: subtitles, cover arts, data tracks (Apple's `mebx` metadata, Samsung's).
 - The video is decoded without applying its rotation: the pixels are stored as in the original, and the rotation stays in the metadata (the track's display matrix). A player shows the output the same way as the original.
 - Every frame is kept, at its own time, in the original's time base.
@@ -47,12 +47,12 @@ Some fields change by nature (brands, sizes, bitrates, encoder name, durations o
 
 ## Progress (`--json`)
 
-With `--json`, the progress is written on stderr, one JSON object per line, about every half second while encoding:
+With `--json`, the progress is written on stderr, one JSON object per line, about every half second while encoding (here, a fabricated 4-second 320×240 clip, encoded in less than a second):
 
 ```json
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 0.0, "duration_seconds": 7.59, "percent": 0.0}}
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 3.52, "duration_seconds": 7.59, "percent": 46.4}}
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 7.59, "duration_seconds": 7.59, "percent": 100.0}}
+{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 0.0, "duration_seconds": 4.0, "percent": 0.0}}
+{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 99.9}}
+{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 100.0}}
 ```
 
 - **`encoded_seconds`**: the seconds of video encoded so far; **`duration_seconds`**: the video's duration.
@@ -62,7 +62,7 @@ The first line comes once the checks have passed, when encoding starts. An expor
 
 ## JSON output (`--json`)
 
-stdout only holds one JSON document:
+stdout only holds one JSON document (the same clip):
 
 ```json
 {
@@ -70,10 +70,10 @@ stdout only holds one JSON document:
   "ok": true,
   "command": "compress-video",
   "result": {
-    "input": {"path": "20240601_120000.mp4", "format": "mp4", "size_bytes": 14100000, "mtime": "2024-06-01T10:00:12.123456+00:00"},
-    "output": {"path": "/tmp/20240601_120000.mp4", "format": "mp4", "size_bytes": 1090000, "mtime": "2024-06-01T10:00:12.123456+00:00"},
-    "duration_seconds": 7.59,
-    "elapsed_seconds": 24.5,
+    "input": {"path": "clip.mp4", "format": "mp4", "size_bytes": 56613, "mtime": "2024-06-01T08:00:12+00:00"},
+    "output": {"path": "/tmp/clip.mp4", "format": "mp4", "size_bytes": 39416, "mtime": "2024-06-01T08:00:12+00:00"},
+    "duration_seconds": 4.0,
+    "elapsed_seconds": 0.7,
     "preset": "default",
     "crf": 32
   }
@@ -89,7 +89,7 @@ stdout only holds one JSON document:
 
 The output is written atomically: ffmpeg writes a temporary file next to it (`.<name>.<random>.tmp`), exiftool rewrites it, it gets the original's dates (atime and mtime), then it takes the output's name. A reader never sees a half-written output. Without `--overwrite`, a file that appeared at the output during the export is kept: the export fails with `output_exists` (the name is given by a hard link, which can't replace a file; on a filesystem without hard links, the output is checked again just before the rename).
 
-An export that fails, or is stopped by SIGTERM or SIGINT (Ctrl+C) at any point before the output takes its name, kills ffmpeg or exiftool, removes the temporary file and the output's folders it created (if still empty), and exits with `interrupted` (130) for a signal. From the moment the output takes its name until the JSON document is written, both signals are ignored: the export is done and reported as such (exit 0), never `interrupted` with a complete output on disk. A SIGKILL is the exception, see [Known limits](#known-limits).
+An export that fails, or is stopped by SIGTERM or SIGINT (Ctrl+C) at any point before the output takes its name, kills ffmpeg or exiftool, removes the temporary file and the output's folders it created (if still empty), and exits with `interrupted` (130) for a signal. Only the first signal interrupts: the next ones are ignored, so that the cleanup runs to the end. From the moment the output takes its name until the process exits, both signals are ignored: the export is done and reported as such (exit 0), never `interrupted` with a complete output on disk. Once the JSON document is written, a signal never changes the exit code it announces (0, 130 or the error's code). A SIGKILL is the exception, see [Known limits](#known-limits).
 
 Paths are given to ffmpeg and ffprobe as absolute `file:` paths: a file named `2024-06-01T10:30:00.mp4` is a file, not a protocol.
 

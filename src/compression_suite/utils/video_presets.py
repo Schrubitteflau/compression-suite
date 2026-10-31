@@ -145,9 +145,10 @@ def _lfe_channels(layout: str) -> int:
 
 def opus_layout(channels: int, layout: str | None) -> str:
     """The layout an audio track is encoded with in Opus: its own if Opus accepts it, else the one keeping the most
-    channels without inventing any: no more channels, and no more non-LFE channels, than the source has.
+    channels with no more channels, and no more non-LFE channels, than the source has.
 
-    4.0 gives quad, 2.1 stereo (3.0 would invent a centre), hexagonal and 5.1(side) give 5.1. A track without a
+    4.0 gives quad, 2.1 stereo (3.0 would add a centre), hexagonal and 5.1(side) give 5.1. The chosen layout may still
+    hold an LFE channel the source lacks (hexagonal to 5.1): ffmpeg leaves it silent. A track without a
     known layout (PCM in a MOV, for instance) counts all its channels as non-LFE.
     """
     if layout in {name for name, _, _ in OPUS_LAYOUTS}:

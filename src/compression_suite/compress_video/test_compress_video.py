@@ -810,3 +810,50 @@ def test_human_progress_shows_the_seconds_encoded_out_of_the_duration(tmp_path: 
     assert result.exit_code == 0, result.output
     assert "Encoding" in result.stderr
     assert "4.0/4.0 s" in result.stderr
+
+
+# --- Review round 3 --------------------------------------------------------------
+
+
+def _run_cli(source: Path, output: Path) -> subprocess.Popen:
+    """Run compress-video --json in a process of its own."""
+    return subprocess.Popen(
+        [sys.executable, "-m", "compression_suite", "compress-video", str(source), "--preset", "dance"]
+        + ["-o", str(output), "--json"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT], ids=["SIGTERM", "SIGINT"])
+def test_a_signal_right_after_the_envelope_keeps_its_exit_code(tmp_path: Path, signum: signal.Signals):
+    source = _make_video(tmp_path / "short.mp4", size="32x32", duration=0.2, audio=False, phone_metadata=False)
+    codes = []
+    for attempt in range(6):  # the process is shutting down: it would die of the signal, some of the times
+        output = tmp_path / f"out-{attempt}.mp4"
+        process = _run_cli(source, output)
+        assert process.stdout is not None
+        envelope = json.loads(process.stdout.readline())
+        process.send_signal(signum)
+        process.wait(timeout=30)
+        assert envelope["ok"] is True
+        codes.append(process.returncode)
+    assert codes == [0] * 6
+
+
+def test_signals_during_the_cleanup_of_an_interruption_change_nothing(tmp_path: Path):
+    source = _make_video(tmp_path / "long.mp4", size="640x480", duration=10.0, phone_metadata=False)
+    process = _start_export(source, tmp_path / "out.mp4")
+    try:
+        for _ in range(5):  # a caller insisting: the first one interrupts, the others must not break the cleanup
+            process.send_signal(signal.SIGTERM)
+        assert process.stdout is not None
+        envelope = json.loads(process.stdout.readline())
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=30)
+    finally:
+        process.kill()
+    assert envelope["error"]["code"] == "interrupted"
+    assert process.returncode == 130
+    assert _files(tmp_path) == {"long.mp4"}

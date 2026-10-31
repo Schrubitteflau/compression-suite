@@ -101,7 +101,9 @@ def compress_video(
     and frame rate, metadata and modification date of the original kept.
     """
 
-    interruptions = Interruptions()
+    # In a process of its own (stdout is the process's), the handlers stay until exit; an in-process caller (CliRunner)
+    # gets its own back
+    interruptions = Interruptions(until_exit=sys.stdout is sys.__stdout__)
 
     def body() -> dict[str, Any]:
         """Run the export and return the `result` object of the JSON contract."""

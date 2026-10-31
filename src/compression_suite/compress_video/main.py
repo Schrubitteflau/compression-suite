@@ -56,14 +56,21 @@ class Terminated(KeyboardInterrupt):
 class Interruptions:
     """SIGINT and SIGTERM as interruptions, for the whole command, until the output is in place.
 
-    From `hold()`, called right before the output takes its name, both signals are ignored until the block ends: the
-    export is then done and reported as such, never an `interrupted` envelope with a complete output on disk, nor a
-    process killed before writing its envelope. The block must hold the writing of the envelope.
+    Only the first signal interrupts: the next ones are ignored, so that the cleanup it starts runs to the end. From
+    `hold()`, called right before the output takes its name, both signals are ignored: the export is then done and
+    reported as such, never an `interrupted` envelope with a complete output on disk. The block must hold the writing
+    of the envelope.
+
+    With `until_exit`, both signals are ignored once the block is over, until the process exits: one arriving after
+    the envelope (the interpreter shutting down) leaves the exit code of the envelope, 0 for a done export, 130 for
+    an interrupted one, rather than killing the process. A Python handler wouldn't do: the interpreter puts the
+    default one back for SIGINT while shutting down.
     """
 
     SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
-    def __init__(self) -> None:
+    def __init__(self, until_exit: bool) -> None:
+        self.until_exit = until_exit
         self.held = False
         self.previous: dict[int, Any] = {}
 
@@ -74,7 +81,7 @@ class Interruptions:
 
     def __exit__(self, *exc_info: object) -> None:
         for signum, handler in self.previous.items():
-            signal.signal(signum, handler)
+            signal.signal(signum, signal.SIG_IGN if self.until_exit else handler)
 
     def hold(self) -> None:
         """Ignore both signals from now on: the export can no longer be undone."""
@@ -83,6 +90,7 @@ class Interruptions:
     def _interrupt(self, signum: int, frame: Any) -> None:
         if self.held:
             return
+        self.held = True  # the next signals must not cut the cleanup this one starts
         raise Terminated() if signum == signal.SIGTERM else KeyboardInterrupt()
 
 
