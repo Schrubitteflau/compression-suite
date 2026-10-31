@@ -664,6 +664,27 @@ def _damage_middle(path: Path) -> None:
     path.write_bytes(bytes(data))
 
 
+def _garble_slices(path: Path) -> None:
+    """Garble the slice data of three packets in the middle of the video stream, keeping each packet's 4-byte length
+    prefix, NAL header and the start of the slice header: the container stays sound, only the decoder sees damage."""
+    packets = json.loads(
+        subprocess.run(
+            [str(resolve_tool("ffprobe")), "-v", "error", "-select_streams", "v:0"]
+            + ["-show_entries", "packet=pos,size", "-of", "json", str(path)],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+    )["packets"]
+    data = bytearray(path.read_bytes())
+    middle = len(packets) // 2
+    for packet in packets[middle : middle + 3]:
+        start, size = int(packet["pos"]), int(packet["size"])
+        for i in range(start + 12, start + size):
+            data[i] = (data[i] * 7 + 93) & 0xFF
+    path.write_bytes(bytes(data))
+
+
 @pytest.mark.parametrize(
     ("name", "audio"),
     [("pcm.mov", ("-c:a", "pcm_s16le")), ("video.mkv", ("-an",))],
@@ -676,9 +697,10 @@ def test_copied_h264_damaged_in_the_middle_is_input_corrupt(tmp_path, name, audi
         *("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=4", "-f", "lavfi", "-i", "sine=duration=4"),
         *("-c:v", "libx264", "-preset", "ultrafast", "-g", "15", *audio, str(video)),
     )
-    _damage_middle(video)
+    _garble_slices(video)
     output = tmp_path / "copy.mp4"
-    _assert_error(_invoke(video, output), "input_corrupt", 27)
+    error = _assert_error(_invoke(video, output), "input_corrupt", 27)
+    assert "[h264 @" in error["message"]  # met by the decoder, not the demuxer
     assert not output.exists()
 
 
@@ -711,3 +733,39 @@ def test_copy_failing_for_another_reason_removes_the_folders_it_created(tmp_path
     assert completed.returncode == 50, completed.stdout
     assert json.loads(completed.stdout)["error"]["code"] == "internal_error"
     assert list((tmp_path / "existing").iterdir()) == []  # the folder that was there stays
+
+
+# Review round 3
+
+
+@pytest.mark.parametrize(
+    "retag",
+    [
+        ("-bsf:v", "hevc_metadata=matrix_coefficients=0", "-colorspace", "rgb"),  # ffprobe's `gbr`, on YUV
+        ("-bsf:v", "hevc_metadata=matrix_coefficients=11", "-colorspace", "smpte2085"),
+        ("-bsf:v", "hevc_metadata=colour_primaries=10:matrix_coefficients=12")
+        + ("-color_primaries", "smpte428", "-colorspace", "chroma-derived-nc"),
+    ],
+    ids=["gbr", "smpte2085", "smpte428-chroma-derived"],
+)
+def test_hdr_with_colours_zscale_doesnt_take_falls_back_to_bt2020(tmp_path, retag):
+    video = tmp_path / "pq.mp4"
+    _ffmpeg("-i", str(HDR_PQ), "-c", "copy", *retag, str(video))
+    output = tmp_path / "copy.mp4"
+    assert _display_copy(video, output)["copy_reasons"] == ["video codec hevc", "hdr smpte2084"]
+    copied = _stream(output, "video")
+    assert (copied["pix_fmt"], copied["color_transfer"], copied["color_primaries"]) == ("yuv420p", "bt709", "bt709")
+
+
+@pytest.mark.parametrize("duration", [b"1.0".ljust(18), b"00:00:01,000000000"], ids=["seconds", "comma"])
+def test_matroska_duration_tag_that_doesnt_parse_is_ignored(tmp_path, duration):
+    """The tag is rewritten in place, at the same length: the video's end is then unknown, frames only have to come
+    out."""
+    video = tmp_path / "video.mkv"
+    _ffmpeg("-i", str(H264), "-c", "copy", str(video))
+    data = video.read_bytes()
+    assert data.count(b"00:00:01.000000000") == 1  # the video's tag (its audio lasts a few ms more)
+    video.write_bytes(data.replace(b"00:00:01.000000000", duration))
+    assert _stream(video, "video")["tags"]["DURATION"].strip() == duration.decode().strip()
+    result = _display_copy(video, tmp_path / "copy.mp4")
+    assert result["copy_reasons"] == ["container matroska,webm"]

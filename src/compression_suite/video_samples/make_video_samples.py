@@ -8,7 +8,8 @@ pixels whether a rotation was applied, and how.
   128x72 landscape with a display matrix of -90 degrees (ffprobe `rotation=-90`, exiftool `Rotation: 90`), so it is
   displayed as a 72x128 portrait: red top half, blue bottom half, green square top-right. AAC audio (a 440 Hz sine,
   48 kHz), brand `mp42`, a creation date (2024-06-15 10:00:00 UTC) and a fake GPS position (12.3456 N, 65.4321 E),
-  written where the S23 writes them (`creation_time`, `©xyz`).
+  written by ffmpeg's MP4 muxer: `creation_time` in `mvhd`, the GPS as a 3GPP `loci` box (a phone such as the S23
+  writes a QuickTime `©xyz` atom instead).
 - `h264.mp4`: a video a browser plays as is: H.264 High (8 bits, 4:2:0), AAC audio, brand `isom`, no rotation.
   Displayed as stored: 128x72.
 - `hdr_pq.mp4`: an HDR10 video, as the S23 records with its "HDR10+ video" option: HEVC Main 10 (`yuv420p10le`),
@@ -32,7 +33,7 @@ WIDTH, HEIGHT = 128, 72
 DURATION = 1
 FPS = 30
 CREATION_TIME = "2024-06-15T10:00:00.000000Z"
-FAKE_LOCATION = "+12.3456+065.4321/"  # fake GPS, ISO 6709, as in `©xyz`
+FAKE_LOCATION = "+12.3456+065.4321/"  # fake GPS, ISO 6709, which ffmpeg writes as a `loci` box
 DISPLAY_ROTATION = -90  # counter-clockwise degrees, as ffprobe reports a S23 portrait video
 
 PATTERN = (

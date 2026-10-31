@@ -21,24 +21,29 @@ HDR_NOMINAL_PEAK = 100
 SDR_TAGS = ("-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv")
 
 
-# Colour descriptions that say nothing: the HDR defaults (BT.2020) apply
-UNSPECIFIED = (None, "", "unknown", "unspecified", "reserved")
+# Input colours given to zscale in the chain below: an allow-list of common values, each checked with the pinned
+# ffmpeg. Any value outside it, unspecified or unusual, is ignored and the HDR default, BT.2020, applies: some of
+# them zscale refuses (an RGB matrix on YUV, `smpte2085`, `smpte428` primaries with a `chroma-derived-nc` matrix),
+# others it would take but are not checked.
+ZSCALE_PRIMARIES = ("bt709", "bt470bg", "smpte170m", "bt2020", "smpte431", "smpte432")
+ZSCALE_MATRICES = ("bt709", "bt470bg", "smpte170m", "bt2020nc")
 # zscale has no constant-luminance BT.2020 matrix: the non-constant one is the closest
-ZSCALE_MATRICES = {"bt2020c": "bt2020nc"}
+MATRIX_SUBSTITUTES = {"bt2020c": "bt2020nc"}
 
 
 def tone_mapping_filter(probe: VideoProbe) -> str:
     """The zscale and tonemap chain from the video's HDR transfer to SDR BT.709 8 bits.
 
-    Its input colours are named explicitly, BT.2020 when the video doesn't say (zscale can't always read them from
-    the frames, HLG in particular, nor from a container's `colr` box alone), and the first step's output colours
-    too: without them, zscale finds no path between colour spaces.
+    Its input colours are named explicitly, BT.2020 when the video doesn't say or says something outside the
+    allow-list (zscale can't always read them from the frames, HLG in particular, nor from a container's `colr` box
+    alone), and the first step's output colours too: without them, zscale finds no path between colour spaces.
     """
     video = probe.video
     primaries = video.get("color_primaries")
-    primaries = "bt2020" if primaries in UNSPECIFIED else primaries
+    primaries = primaries if primaries in ZSCALE_PRIMARIES else "bt2020"
     matrix = video.get("color_space")
-    matrix = "bt2020nc" if matrix in UNSPECIFIED else ZSCALE_MATRICES.get(matrix, matrix)
+    matrix = MATRIX_SUBSTITUTES.get(matrix, matrix)
+    matrix = matrix if matrix in ZSCALE_MATRICES else "bt2020nc"
     return ",".join(
         [
             f"zscale=tin={probe.hdr_transfer}:pin={primaries}:min={matrix}"

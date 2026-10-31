@@ -55,7 +55,7 @@ echo 'tinify_api_key = "YOUR_KEY"' >> ~/.config/compression-suite/config.toml
 uv run compression_suite --help
 ```
 
-You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
+You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)). `uv run compression_suite display-copy VIDEO -o COPY.mp4` tells whether a browser plays a video as is, and if not writes an H.264 copy for display (see [display-copy](docs/display-copy.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
 
 ### Tinify API key
 

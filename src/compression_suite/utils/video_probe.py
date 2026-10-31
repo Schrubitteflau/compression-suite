@@ -16,6 +16,7 @@ ffmpeg's `concat` protocol reading `x.mov`.
 """
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from fractions import Fraction
@@ -39,6 +40,9 @@ END_CHECK_WINDOW = 3.0
 # Frames the decoded end may fall short of the announced one by, before the file counts as truncated
 END_CHECK_TOLERANCE_FRAMES = 2
 DEFAULT_FRAME_DURATION = 1 / 30
+
+# Matroska's `DURATION` tag, `HH:MM:SS.nnnnnnnnn`; any other form is ignored, as if absent
+MATROSKA_DURATION = re.compile(r"(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 
 # Transfer characteristics of HDR video: PQ (HDR10, HDR10+, Dolby Vision) and HLG
 HDR_TRANSFERS = ("smpte2084", "arib-std-b67")
@@ -162,14 +166,14 @@ def _decoded_frames(ffmpeg: Path, path: Path, stream_index: int, args: list[str]
 def _announced_end(video: dict[str, Any], container_start: float) -> float | None:
     """Where the video stream ends, in its own time, as its container announces it: its start plus its duration
     (MP4, MPEG-TS), or its `DURATION` tag, which Matroska writes as the stream's end time. None if the container
-    gives no duration of its own to the video stream: the container's covers the audio too."""
+    gives no duration of its own to the video stream (the container's covers the audio too), or a tag that doesn't
+    parse."""
     if video.get("duration") not in (None, "N/A"):
         return float(video.get("start_time") or container_start) + float(video["duration"])
-    tag = (video.get("tags") or {}).get("DURATION")
-    if tag:
-        hours, minutes, seconds = tag.split(":")
-        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-    return None
+    match = MATROSKA_DURATION.fullmatch(str((video.get("tags") or {}).get("DURATION", "")).strip())
+    if match:
+        return int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3])
+    return None  # absent, or in a form that doesn't parse ("6.0", "00:00:06,000"): ignored
 
 
 def _check_end(ffmpeg: Path, path: Path, probe: "VideoProbe", container_start: float) -> str | None:
