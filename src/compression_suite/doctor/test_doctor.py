@@ -76,7 +76,7 @@ def test_nominal_run_reports_the_pinned_exiftool(config_home: Path):
     assert exiftool["found_version"] == EXIFTOOL_VERSION
     assert exiftool["status"] == "ok"
     assert Path(exiftool["path"]).is_file()
-    assert exiftool["used_by"] == ["compress-image", "inspect"]
+    assert exiftool["used_by"] == ["compress-image", "compress-video", "inspect"]
 
 
 def test_nominal_run_reports_the_pinned_ffmpeg_and_ffprobe(config_home: Path):
@@ -88,8 +88,8 @@ def test_nominal_run_reports_the_pinned_ffmpeg_and_ffprobe(config_home: Path):
         assert (tools[name]["expected_version"], tools[name]["found_version"]) == (FFMPEG_VERSION, FFMPEG_VERSION)
         assert tools[name]["status"] == "ok"
         assert Path(tools[name]["path"]).name == name
-    assert tools["ffmpeg"]["used_by"] == ["extract-unique-frames", "reassemble-video"]
-    assert tools["ffprobe"]["used_by"] == ["extract-unique-frames"]
+    assert tools["ffmpeg"]["used_by"] == ["compress-video", "extract-unique-frames", "reassemble-video"]
+    assert tools["ffprobe"]["used_by"] == ["compress-video", "extract-unique-frames"]
 
 
 def test_missing_pinned_tool_fails_with_the_report(
@@ -146,7 +146,7 @@ def test_system_dependencies_are_reported_with_their_commands(config_home: Path)
     assert result.exit_code == 0, result.output
     dependencies = _by_name(_report(result)["system_dependencies"])
     assert list(dependencies) == ["perl", "jpegoptim"]  # ffmpeg is pinned, never taken from PATH
-    assert dependencies["perl"]["used_by"] == ["compress-image", "inspect"]
+    assert dependencies["perl"]["used_by"] == ["compress-image", "compress-video", "inspect"]
     assert dependencies["jpegoptim"]["used_by"] == ["reduce-jpeg-size"]
     perl = dependencies["perl"]
     assert perl["status"] == "ok"
