@@ -17,6 +17,7 @@ from compression_suite.extract_unique_frames.main import (
 from compression_suite.extract_unique_frames.manual_selection import snap_rectangle_to_frame_edges
 from compression_suite.models.geometry import PixelRectangle
 from compression_suite.models.metadata import Metadata
+from compression_suite.utils.pinned_tools import resolve_tool
 
 
 def create_split_screen_video(folder: Path) -> Path:
@@ -34,7 +35,7 @@ def create_split_screen_video(folder: Path) -> Path:
     video_path = folder / "split-screen.mov"
     subprocess.run(
         [
-            "ffmpeg",
+            str(resolve_tool("ffmpeg")),
             "-loglevel",
             "error",
             "-framerate",
@@ -511,4 +512,50 @@ def test_cli_manual_selection_explains_missing_display(
     )
 
     assert "requires a graphical desktop session" in result.output
+    assert not output_path.exists()
+
+
+def test_cli_never_runs_the_ffmpeg_of_the_path(
+    tmp_path: Path,
+    split_screen_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("ffmpeg", "ffprobe"):  # would fail the command if it were run
+        (bin_dir / name).write_text("#!/bin/sh\nexit 1\n")
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    output_path = tmp_path / "output"
+
+    result = CliRunner().invoke(
+        app, ["extract-unique-frames", str(split_screen_video), str(output_path), "--output-format", "png"]
+    )
+
+    assert result.exit_code == 0, result.output
+    metadata = Metadata.model_validate_json((output_path / "metadata.json").read_text())
+    assert metadata.frame_changes_count == 2  # red and blue speakers hash alike, as with the system ffmpeg
+    assert (metadata.video_info.width, metadata.video_info.height) == (64, 64)
+
+
+@pytest.mark.parametrize("tool", ["ffmpeg", "ffprobe"])
+def test_cli_missing_pinned_tool_is_tool_missing(
+    tmp_path: Path,
+    split_screen_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+) -> None:
+    tools_dir = tmp_path / "tools"
+    installed = resolve_tool("ffmpeg").parent.parent
+    (tools_dir / installed.name / "bin").mkdir(parents=True)
+    other = "ffprobe" if tool == "ffmpeg" else "ffmpeg"
+    (tools_dir / installed.name / "bin" / other).symlink_to(installed / "bin" / other)
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tools_dir))
+    output_path = tmp_path / "output"
+
+    result = CliRunner().invoke(app, ["extract-unique-frames", str(split_screen_video), str(output_path)])
+
+    assert result.exit_code == 30, result.output
+    assert tool in result.stderr
+    assert "just install-tools" in result.stderr
     assert not output_path.exists()
