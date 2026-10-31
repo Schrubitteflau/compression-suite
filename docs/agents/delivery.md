@@ -1,0 +1,53 @@
+# Delivery
+
+Read by `/ship` and its subagents. Antoine's standing instructions for delivering a spec or a lot of tickets.
+
+## Checks
+
+- Verify: `just qa` (installs the pinned tools, ruff format and check, ty, pytest); must finish green on every ticket
+  and on the integration branch, and must not reformat files the ticket did not touch.
+- No server or page here: compression-suite is a CLI. The manual check is the CLI itself, run with `uv run
+  --python=3.13 compression_suite ...` on fabricated samples and on the real-file copies allowed below.
+- Browser playback check (video tickets): headless Chrome (`/usr/bin/google-chrome`) or Firefox (`/usr/bin/firefox`),
+  driven by Playwright installed in a scratch directory outside the repo; load the file in a `<video>` element and
+  read `error`, `readyState`, `videoWidth`/`videoHeight` and the console, not only whether the page loads.
+- A fresh worktree has no `.tools/`: `just qa` runs `just install-tools`, which downloads the pinned tools.
+
+## Off-limits
+
+- Real data: never written, moved or deleted. Read-only use allowed only for manual checks: copy one or two videos
+  from `~/Syncthing-shares/S23` and one iPhone HEIC from `~/Syncthing-shares/Xiaomi/Messages` into `/tmp`, work on the
+  copies, delete the copies at the end. Never touch the originals.
+- The repo is public: no real file, extract, frame or metadata dump of a real file is ever committed. Test fixtures
+  are fabricated by a versioned script. Nothing personal in issue comments: no GPS value, no real path, no image.
+- Paid services: no real Tinify call. Tests mock `tinify`. Never put a Tinify key anywhere; never run
+  `compress-image` on the real configuration.
+- WelcomeApp (`~/WelcomeApp`) is read-only for this work; its `bun dev` (port 27183) is never started or stopped.
+
+## Branches and commits
+
+- Integration branch: `<spec-slug>-lot-<n>` (e.g. `rangement-medias-lot-3`), created from `master`. Ticket branches:
+  `<integration-branch>-<ticket>`.
+- Running `/ship` is Antoine's explicit request to commit on the integration and ticket branches, never on `master`.
+  Add only the files the ticket touched.
+- Commit messages: English, in the style of `git log` (imperative, what changed for the user). Never `Closes #N`.
+- At the end: push nothing, close no issue. Antoine reviews and merges the integration branch himself; after his
+  push, each ticket gets a closing comment (`gh issue comment`) with its acceptance boxes ticked.
+
+## Docs
+
+- Specs and decision journal: in WelcomeApp (`~/WelcomeApp/docs/spec-*.md`, `spec-*.decisions.md`, `docs/adr/`).
+  Here: the issues (parent and tickets) carry the contract decisions; `README.md` documents each command.
+
+## Project edge cases
+
+Failure modes this project has already met; reviewers check them on top of the generic list:
+
+- stdout must hold only the JSON envelope in `--json`: any stray print or tool output breaks WelcomeApp;
+- a new error code only when WelcomeApp reacts differently; otherwise the reason goes in the message;
+- a decoder that accepts a damaged file silently (truncated HEIC with missing tiles);
+- metadata lost or rewritten by the encoder (orientation applied twice, colour profile, dates), shown as no loss;
+- a write killed halfway leaving a partial output or a temporary file next to it; the original's bytes or mtime
+  changed;
+- a tool taken from the `PATH` instead of the pinned one; a pinned-tool upgrade that changes decoding (re-run
+  `inspect` on real files, none must be flagged corrupt).
