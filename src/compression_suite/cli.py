@@ -4,6 +4,7 @@ import typer
 
 from compression_suite.compress_image.cli import compress_image
 from compression_suite.compress_video.cli import compress_video
+from compression_suite.display_copy.cli import display_copy
 from compression_suite.doctor.cli import doctor
 from compression_suite.extract_unique_frames.cli import extract_unique_frames
 from compression_suite.inspect_file.cli import inspect
@@ -25,6 +26,7 @@ def version():
 
 app.command(cls=JsonUsageErrorCommand)(compress_image)
 app.command(cls=JsonUsageErrorCommand)(compress_video)
+app.command(cls=JsonUsageErrorCommand)(display_copy)
 app.command(cls=JsonUsageErrorCommand)(doctor)
 app.command()(extract_unique_frames)
 app.command(cls=JsonUsageErrorCommand)(inspect)
