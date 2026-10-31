@@ -5,6 +5,8 @@ from typing import Any
 import ffmpeg
 from pydantic import BaseModel, Field
 
+from compression_suite.utils.pinned_tools import resolve_tool
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -20,9 +22,14 @@ class VideoInfo(BaseModel):
 
 
 def get_video_info(filename: str) -> VideoInfo:
+    """Read the first video stream of a file with the pinned ffprobe.
+
+    Raises:
+        CommandError: `tool_missing` if the pinned ffprobe is not usable.
+    """
+    ffprobe_path = resolve_tool("ffprobe")
     try:
-        # Use ffmpeg.probe to get video information
-        probe = ffmpeg.probe(filename, select_streams="v:0")
+        probe = ffmpeg.probe(filename, cmd=str(ffprobe_path), select_streams="v:0")
         stream: Any = probe["streams"][0]
 
         # Parse frame rate

@@ -39,6 +39,16 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 - Specs and decision journal: in WelcomeApp (`~/WelcomeApp/docs/spec-*.md`, `spec-*.decisions.md`, `docs/adr/`).
   Here: the issues (parent and tickets) carry the contract decisions; `README.md` documents each command.
 
+## Real usage
+
+What the product really meets; reviewers judge `blocking` against it.
+
+- Caller: WelcomeApp, through the CLI in `--json` mode. No other caller.
+- Inputs: files from phones. Galaxy S23 videos (HEVC in MP4), iPhone HEIC photos, JPEG.
+- Some inputs are cut short, when a Syncthing sync was interrupted.
+- WelcomeApp runs several calls in parallel to prepare the next files (inspect, preview, display copy). It runs only one
+  export at a time.
+
 ## Project edge cases
 
 Failure modes this project has already met; reviewers check them on top of the generic list:

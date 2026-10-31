@@ -7,5 +7,27 @@
     "executable": "exiftool",
     "version_args": ["-ver"],
     "version_pattern": "^(\\S+)$"
+  },
+  "ffmpeg": {
+    "version": "n9.0.2-17-g2a571b6068-20260930",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz",
+    "sha256": "68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269",
+    "archive_root": "ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0",
+    "note": "BtbN keeps a month-end build two years: this one is deleted around 2028-10, bump it before 2028-09",
+    "package": "ffmpeg",
+    "executable": "bin/ffmpeg",
+    "version_args": ["-version"],
+    "version_pattern": "^ffmpeg version (\\S+)"
+  },
+  "ffprobe": {
+    "version": "n9.0.2-17-g2a571b6068-20260930",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz",
+    "sha256": "68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269",
+    "archive_root": "ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0",
+    "note": "BtbN keeps a month-end build two years: this one is deleted around 2028-10, bump it before 2028-09",
+    "package": "ffmpeg",
+    "executable": "bin/ffprobe",
+    "version_args": ["-version"],
+    "version_pattern": "^ffprobe version (\\S+)"
   }
 }

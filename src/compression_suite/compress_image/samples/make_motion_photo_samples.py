@@ -6,7 +6,8 @@
   entry holds the same MP4, laid out like the S23's (entries, then the `SEFH` index, its length and `SEFT`).
 - `trailing_data.jpg`: small JPEG followed by bytes that no known structure explains.
 
-The MP4 is made by ffmpeg (one blue frame, no audio), which is only needed to run this script.
+The MP4 is made by the system ffmpeg in PATH (one blue frame, no audio), not the pinned one: it is only needed to run
+this script, and the committed samples were made this way.
 
 Run from the repo root: `uv run python src/compression_suite/compress_image/samples/make_motion_photo_samples.py`
 """

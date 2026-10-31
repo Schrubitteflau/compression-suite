@@ -1,8 +1,10 @@
 """Pinned tools: external programs downloaded into the project at the exact version of a versioned manifest.
 
 `pinned-tools.json`, at the project root, gives for each tool its version, a stable download URL,
-the SHA-256 of the archive and how to read the version back. `just install-tools` downloads,
-verifies and extracts every tool into `.tools/<name>-<version>/`, ignored by git.
+the SHA-256 of the archive (`.tar.gz` or `.tar.xz`) and how to read the version back. `just install-tools`
+downloads, verifies and extracts every tool into `.tools/<package>-<version>/`, ignored by git. The package is
+the tool's name, unless several tools come from one archive (ffmpeg and ffprobe): they then name the same
+package, and the archive is downloaded and extracted once.
 
 `resolve_tool` is the only way to get a pinned tool: it never looks at `PATH`, and it checks
 that the installed tool reports the manifest's version.
@@ -11,14 +13,18 @@ The manifest and `.tools/` are found relative to this file, so compression-suite
 its checkout (`uv run`, editable install), not from a wheel installed elsewhere.
 """
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tarfile
 import tempfile
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +50,7 @@ class PinnedTool:
     executable: str
     version_args: tuple[str, ...]
     version_pattern: str
+    package: str | None = None  # shared by the tools of one archive; the tool's name when None
 
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, PinnedTool]:
@@ -59,6 +66,7 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, PinnedTool]:
             executable=entry["executable"],
             version_args=tuple(entry["version_args"]),
             version_pattern=entry["version_pattern"],
+            package=entry.get("package"),
         )
         for name, entry in entries.items()
     }
@@ -72,7 +80,7 @@ def tools_dir() -> Path:
 
 def install_dir(tool: PinnedTool, root: Path) -> Path:
     """Folder where a tool is installed, named after its version so that a bump never reuses an old install."""
-    return root / f"{tool.name}-{tool.version}"
+    return root / f"{tool.package or tool.name}-{tool.version}"
 
 
 def expected_executable(tool: PinnedTool) -> Path:
@@ -126,21 +134,55 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+@contextlib.contextmanager
+def locked(root: Path) -> Iterator[None]:
+    """Hold an exclusive lock on the tools folder, so that two installs (`just qa` and `just test` run together)
+    never work in it at the same time; the lock goes with the process, even if it is killed."""
+    descriptor = os.open(root, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def remove_stale_temp_folders(tool: PinnedTool, root: Path) -> None:
+    """Remove the temporary folders left by an install killed halfway: `.<package>-` or `.<name>-` followed by
+    the 8 random characters of `tempfile`, never the folder of a tool whose name only starts the same way.
+
+    Only safe under `locked`: a temporary folder is then never the one of an install in progress.
+    """
+    for prefix in {tool.package or tool.name, tool.name}:
+        pattern = re.compile(rf"\.{re.escape(prefix)}-[a-z0-9_]{{8}}")
+        for stale in root.iterdir():
+            if pattern.fullmatch(stale.name) and stale.is_dir() and not stale.is_symlink():
+                shutil.rmtree(stale)
+
+
 def install_tool(tool: PinnedTool, root: Path) -> Path:
     """Download, verify and extract one tool; do nothing if the right version is already installed.
 
-    The archive is extracted in a temporary folder next to its destination, then renamed, so that
-    an interrupted install never leaves a half-extracted tool behind.
+    The archive is downloaded and extracted in a temporary folder next to its destination, then renamed,
+    so that an interrupted install never leaves a half-extracted tool behind. A temporary folder left by
+    an install killed halfway (where Python couldn't clean it up) is removed by the next install. The whole
+    install holds the tools folder's lock: a concurrent install waits, then finds the tool installed.
     """
+    root.mkdir(parents=True, exist_ok=True)
+    with locked(root):
+        remove_stale_temp_folders(tool, root)
+        return _install_unlocked(tool, root)
+
+
+def _install_unlocked(tool: PinnedTool, root: Path) -> Path:
+    """The install itself, under the tools folder's lock."""
     destination = install_dir(tool, root)
     executable = destination / tool.executable
     if is_installed(tool, executable):
         print(f"{tool.name} {tool.version} already installed in {destination}")
         return executable
 
-    root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=root, prefix=f".{tool.name}-") as tmp:
-        archive = Path(tmp) / "archive.tar.gz"
+    with tempfile.TemporaryDirectory(dir=root, prefix=f".{tool.package or tool.name}-") as tmp:
+        archive = Path(tmp) / "archive"
         print(f"Downloading {tool.name} {tool.version} from {tool.url}")
         with urllib.request.urlopen(tool.url, timeout=60) as response, archive.open("wb") as f:
             shutil.copyfileobj(response, f)
@@ -150,7 +192,7 @@ def install_tool(tool: PinnedTool, root: Path) -> Path:
             raise RuntimeError(f"SHA-256 mismatch for {tool.url}: expected {tool.sha256}, got {digest}")
 
         extracted = Path(tmp) / "extracted"
-        with tarfile.open(archive) as tar:
+        with tarfile.open(archive) as tar:  # compression detected on the content: gzip, xz...
             if hasattr(tarfile, "data_filter"):
                 tar.extractall(extracted, filter="data")
             else:  # Python without extraction filters (< 3.10.12)

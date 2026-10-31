@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from compression_suite.models.metadata import Metadata, TimestampInfo
+from compression_suite.utils.pinned_tools import resolve_tool
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ def prepare_frames_cfr(
 
 
 def build_ffmpeg_pipeline(
+    ffmpeg_path: Path,
     temp_path: Path,
     output_path: Path,
     mode: FrameMode,
@@ -183,7 +185,7 @@ def build_ffmpeg_pipeline(
 
     # Add mode-specific options
     if mode == "vfr":
-        output_kwargs["vsync"] = "vfr"  # Variable frame rate - respects exact durations from concat
+        output_kwargs["fps_mode"] = "vfr"  # Variable frame rate - respects exact durations from concat
 
     # Create output with or without audio
     if audio_file:
@@ -206,7 +208,7 @@ def build_ffmpeg_pipeline(
 
     # Run FFmpeg
     try:
-        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        ffmpeg.run(stream, cmd=str(ffmpeg_path), overwrite_output=True, capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as e:
         logger.error(f"FFmpeg failed: {e.stderr.decode() if e.stderr else 'Unknown error'}")
         raise
@@ -235,6 +237,7 @@ def reassemble_video_from_folder(
         mode: Frame rate mode - "vfr" (variable, most accurate) or "cfr" (constant, better player compatibility)
         fps: Target framerate for CFR mode (default: 25.0)
     """
+    ffmpeg_path = resolve_tool("ffmpeg")
     folder_path = Path(frames_folder)
     output_path = Path(output_file)
 
@@ -285,7 +288,9 @@ def reassemble_video_from_folder(
         logger.info("Encoding video with FFmpeg...")
 
         # Build and run FFmpeg pipeline
-        build_ffmpeg_pipeline(temp_path, output_path, mode, fps, concat_file, video_codec, crf, preset, audio_file)
+        build_ffmpeg_pipeline(
+            ffmpeg_path, temp_path, output_path, mode, fps, concat_file, video_codec, crf, preset, audio_file
+        )
 
     logger.info(f"Video saved to: {output_path}")
     logger.info("Done!")
