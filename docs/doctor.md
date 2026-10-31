@@ -35,7 +35,7 @@ compression_suite doctor --json
         "found_version": "13.55",
         "path": "/home/me/compression-suite/.tools/exiftool-13.55/exiftool",
         "status": "ok",
-        "used_by": ["compress-image", "inspect"]
+        "used_by": ["compress-image", "compress-video", "inspect"]
       },
       {
         "name": "ffmpeg",
@@ -43,7 +43,7 @@ compression_suite doctor --json
         "found_version": "n9.0.2-17-g2a571b6068-20260930",
         "path": "/home/me/compression-suite/.tools/ffmpeg-n9.0.2-17-g2a571b6068-20260930/bin/ffmpeg",
         "status": "ok",
-        "used_by": ["display-copy", "extract-unique-frames", "reassemble-video"]
+        "used_by": ["compress-video", "display-copy", "extract-unique-frames", "reassemble-video"]
       },
       {
         "name": "ffprobe",
@@ -51,11 +51,11 @@ compression_suite doctor --json
         "found_version": "n9.0.2-17-g2a571b6068-20260930",
         "path": "/home/me/compression-suite/.tools/ffmpeg-n9.0.2-17-g2a571b6068-20260930/bin/ffprobe",
         "status": "ok",
-        "used_by": ["display-copy", "extract-unique-frames"]
+        "used_by": ["compress-video", "display-copy", "extract-unique-frames"]
       }
     ],
     "system_dependencies": [
-      {"name": "perl", "found_version": "5.30.0", "path": "/usr/bin/perl", "status": "ok", "used_by": ["compress-image", "inspect"]},
+      {"name": "perl", "found_version": "5.30.0", "path": "/usr/bin/perl", "status": "ok", "used_by": ["compress-image", "compress-video", "inspect"]},
       {"name": "jpegoptim", "found_version": null, "path": null, "status": "missing", "used_by": ["reduce-jpeg-size"]}
     ],
     "tinify_api_key": {

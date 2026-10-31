@@ -14,7 +14,7 @@ The main idea is to build a content-aware multimedia compression and processing 
 2. **uv**: A fast Python package manager - [installation guide](https://docs.astral.sh/uv/guides/install-python/)
 3. **Linux x86_64 with glibc 2.28 or later and a Linux kernel 4.18 or later** (Ubuntu 20.04 and later, Debian 10 and later): the pinned ffmpeg and ffprobe are a Linux x86_64 build with their codec libraries built in, dynamically linked against the system's glibc and libgcc_s only. The system FFmpeg is no longer needed to run the commands, which never use the one in `PATH`; it is only needed to regenerate the motion photo samples (`make_motion_photo_samples.py`) and for the manual audio extraction of the [presentation workflow](#complete-workflow-for-a-presentation-video)
     - **Expiry of the pinned build**: BtbN keeps a month-end build for two years, so the pinned archive (`autobuild-2026-09-30`) will be deleted around 2028-10. Bump it in `pinned-tools.json` before 2028-09
-4. **Perl**: Required to run the pinned exiftool (`compress-image`, `inspect`) - preinstalled on most Linux and macOS systems
+4. **Perl**: Required to run the pinned exiftool (`compress-image`, `compress-video`, `inspect`) - preinstalled on most Linux and macOS systems
     - Linux: `sudo apt install perl` (Ubuntu/Debian) or `sudo dnf install perl` (Fedora)
 5. **just**: Runs the project recipes, including the pinned tools install - [installation guide](https://just.systems/man/en/packages.html)
 
@@ -39,7 +39,7 @@ uv sync
 just install-tools
 ```
 
-Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Pinned today: exiftool (used by `compress-image` and `inspect`), ffmpeg (used by `display-copy`, `extract-unique-frames` and `reassemble-video`) and ffprobe (used by `display-copy` and `extract-unique-frames`). ffmpeg and ffprobe come from one archive, a month-end build of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (`linux64-gpl`, with libx264, libx265 and libopus), downloaded once (about 150 MB, 515 MB extracted). A missing pinned tool makes the command fail with `tool_missing` (exit code 30), naming the install command.
+Some external tools are pinned: instead of the system's, compression-suite uses a copy downloaded into the project (`.tools/`, ignored by git) at the exact version of [`pinned-tools.json`](pinned-tools.json). The recipe downloads each archive from a stable, versioned URL, checks its SHA-256 and extracts it. It can be run again at any time: an already installed tool is kept. Pinned today: exiftool (used by `compress-image`, `compress-video` and `inspect`), ffmpeg (used by `compress-video`, `display-copy`, `extract-unique-frames` and `reassemble-video`) and ffprobe (used by `compress-video`, `display-copy` and `extract-unique-frames`). ffmpeg and ffprobe come from one archive, a month-end build of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (`linux64-gpl`, with libx264, libx265 and libopus), downloaded once (about 150 MB, 515 MB extracted). A missing pinned tool makes the command fail with `tool_missing` (exit code 30), naming the install command.
 
 4. Configure the Tinify API key (for `compress-image` only). Get one at https://tinypng.com/developers, then write it in compression-suite's configuration file, readable by you alone (see [Tinify API key](#tinify-api-key)):
 
@@ -55,7 +55,7 @@ echo 'tinify_api_key = "YOUR_KEY"' >> ~/.config/compression-suite/config.toml
 uv run compression_suite --help
 ```
 
-You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)). `uv run compression_suite display-copy VIDEO -o COPY.mp4` tells whether a browser plays a video as is, and if not writes an H.264 copy for display (see [display-copy](docs/display-copy.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
+You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)), and `compress-video` compresses a whole video with one of them (see [compress-video](docs/compress-video.md)). `uv run compression_suite display-copy VIDEO -o COPY.mp4` tells whether a browser plays a video as is, and if not writes an H.264 copy for display (see [display-copy](docs/display-copy.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
 
 ### Tinify API key
 
