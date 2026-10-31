@@ -1,6 +1,6 @@
 # video-presets
 
-List the named video presets. They are defined in compression-suite only, in one place shared by every command that encodes a video: a caller (WelcomeApp) shows them from this list and never hard-codes one.
+List the named video presets. They are defined in compression-suite only, in one place shared by every command that encodes a video ([`compress-video`](compress-video.md) today): a caller (WelcomeApp) shows them from this list and never hard-codes one.
 
 Every preset keeps the definition and the frame rate of the original; only an odd width or height loses its last column or row, which x265 can't encode in 4:2:0. The output is an MP4: HEVC video (x265, tagged `hvc1`) in 4:2:0, which players and galleries read, with Opus audio or no audio at all. An 8-bit source (RGB and 4:4:4 screen recordings included) gives 8-bit Main, a 10-bit one (HDR, HLG) 10-bit Main 10 with its colour tags. A command that encodes takes a preset id and, optionally, another CRF within the bounds given here.
 

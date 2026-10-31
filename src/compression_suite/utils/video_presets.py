@@ -120,3 +120,52 @@ def resolve_preset(preset_id: str, crf: int | None = None) -> VideoPreset:
             {"crf": crf, "crf_min": CRF_MIN, "crf_max": CRF_MAX},
         )
     return replace(preset, crf=crf)
+
+
+# The channel layouts libopus encodes (Vorbis channel order): name, channels, LFE channels. It refuses any other one,
+# 5.1(side) and 2.1 among them.
+OPUS_LAYOUTS: tuple[tuple[str, int, int], ...] = (
+    ("mono", 1, 0),
+    ("stereo", 2, 0),
+    ("3.0", 3, 0),
+    ("quad", 4, 0),
+    ("5.0", 5, 0),
+    ("5.1", 6, 1),
+    ("6.1", 7, 1),
+    ("7.1", 8, 1),
+)
+
+
+def _lfe_channels(layout: str) -> int:
+    """The LFE channels of an ffmpeg channel layout name (`5.1(side)`, `7.1.4`, `FL+FR+LFE`, `22.2`...)."""
+    if layout == "22.2":
+        return 2
+    return 1 if "LFE" in layout or any(f"{n}.1" in layout for n in range(10)) else 0
+
+
+def opus_layout(channels: int, layout: str | None) -> str:
+    """The layout an audio track is encoded with in Opus: its own if Opus accepts it, else the one keeping the most
+    channels with no more channels, and no more non-LFE channels, than the source has.
+
+    4.0 gives quad, 2.1 stereo (3.0 would add a centre), hexagonal and 5.1(side) give 5.1. The chosen layout may still
+    hold an LFE channel the source lacks (hexagonal to 5.1): ffmpeg leaves it silent. A track without a
+    known layout (PCM in a MOV, for instance) counts all its channels as non-LFE.
+    """
+    if layout in {name for name, _, _ in OPUS_LAYOUTS}:
+        return layout
+    lfe = _lfe_channels(layout or "")
+    fitting = [
+        name for name, count, opus_lfe in OPUS_LAYOUTS if count <= channels and count - opus_lfe <= channels - lfe
+    ]
+    return fitting[-1] if fitting else "mono"
+
+
+def opus_layout_args(tracks: Sequence[tuple[int, str | None]]) -> list[str]:
+    """ffmpeg output options giving each audio track (channels and layout, in output order) a layout Opus accepts;
+    ffmpeg downmixes the tracks that need it. Nothing for a track whose layout Opus already accepts."""
+    args = []
+    for position, (channels, layout) in enumerate(tracks):
+        target = opus_layout(channels, layout)
+        if target != layout:
+            args += [f"-ch_layout:a:{position}", target]
+    return args
