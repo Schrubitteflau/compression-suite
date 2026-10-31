@@ -257,6 +257,16 @@ def test_heic_beyond_libheif_security_limits_is_flagged_corrupt(tmp_path: Path):
     assert "Number of extents in iloc box (33) exceeds security limit (32)" in result["corrupt"]["reason"]
 
 
+def test_libheif_out_of_memory_on_a_sound_heic_is_internal_error_not_corrupt(tmp_path: Path):
+    # Only libheif's security-limit refusal says the file is damaged; lacking memory says nothing about the file
+    with patch("pillow_heif.open_heif", side_effect=RuntimeError("Memory allocation error: Cannot allocate memory")):
+        result = _invoke(_copy(TILED_HEIC, tmp_path))
+    assert result.exit_code == 50, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "internal_error"
+    assert "Memory allocation error" in error["message"]
+
+
 def test_pdf_is_not_checked_for_corruption(tmp_path: Path):
     assert _inspect(_write(tmp_path, "doc.pdf", b"%PDF-1.4\n"))["corrupt"] == {"detected": False, "reason": None}
 

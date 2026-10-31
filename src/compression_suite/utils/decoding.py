@@ -24,6 +24,8 @@ HEIF_FORMATS = ("heic", "heif")
 # libheif's default security limits: a layout declaring more is not read here, libheif refuses it (a damaged file)
 MAX_ITEMS = 1000
 MAX_EXTENTS_PER_ITEM = 32
+# What libheif's message holds when it refuses a file beyond those limits
+LIBHEIF_SECURITY_LIMIT = "Security limit exceeded"
 
 # What the decoders raise on a file they can't read (Pillow raises SyntaxError for a truncated AVIF, for instance)
 DECODING_ERRORS = (OSError, SyntaxError, ValueError, EOFError)
@@ -139,7 +141,11 @@ def decode_image(source: Path | bytes, detected_format: str) -> Image.Image:
         if detected_format in HEIF_FORMATS:
             try:
                 image = pillow_heif.open_heif(_decoder_input(source)).to_pillow()
-            except RuntimeError as e:  # libheif's other errors, its security limits among them
+            except RuntimeError as e:
+                # libheif refusing a file beyond its security limits: damaged. Any other error of libheif (lacking
+                # memory, for instance) says nothing about the file and is left to the generic handling.
+                if LIBHEIF_SECURITY_LIMIT not in str(e):
+                    raise
                 raise CorruptImageError(str(e).strip()) from e
             reason = missing_item_data(source if isinstance(source, bytes) else source.read_bytes())
             if reason is not None:

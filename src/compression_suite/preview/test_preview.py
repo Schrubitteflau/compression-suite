@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pillow_heif
 import pytest
@@ -233,6 +234,14 @@ def test_heic_beyond_libheif_security_limits_is_input_corrupt(tmp_path: Path):
     error = _assert_error(_invoke(_copy(OVER_LIMIT_HEIC, tmp_path), output), "input_corrupt", 27)
     assert error["details"] == {"detected_format": "heic"}
     assert "Number of extents in iloc box (33) exceeds security limit (32)" in error["message"]
+    assert not output.exists()
+
+
+def test_libheif_out_of_memory_on_a_sound_heic_is_internal_error_not_corrupt(tmp_path: Path):
+    output = tmp_path / "preview.jpg"
+    with patch("pillow_heif.open_heif", side_effect=RuntimeError("Memory allocation error: Cannot allocate memory")):
+        error = _assert_error(_invoke(_copy(TILED_HEIC, tmp_path), output), "internal_error", 50)
+    assert "Memory allocation error" in error["message"]
     assert not output.exists()
 
 
