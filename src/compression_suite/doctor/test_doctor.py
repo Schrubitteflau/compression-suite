@@ -1,4 +1,4 @@
-"""CLI tests for doctor — the pinned exiftool runs for real, unless the tools folder is redirected.
+"""CLI tests for doctor — the pinned exiftool, ffmpeg and ffprobe run for real, unless the tools folder is redirected.
 
 The configuration folder is redirected to a temporary folder (`XDG_CONFIG_HOME`), never the user's.
 """
@@ -18,6 +18,7 @@ runner = CliRunner()
 
 KEY = "doctor-key-0123456789abcdef"
 EXIFTOOL_VERSION = load_manifest()["exiftool"].version
+FFMPEG_VERSION = load_manifest()["ffmpeg"].version
 
 
 @pytest.fixture
@@ -78,6 +79,19 @@ def test_nominal_run_reports_the_pinned_exiftool(config_home: Path):
     assert exiftool["used_by"] == ["compress-image", "inspect"]
 
 
+def test_nominal_run_reports_the_pinned_ffmpeg_and_ffprobe(config_home: Path):
+    result = _invoke("--json")
+    assert result.exit_code == 0, result.output
+    tools = _by_name(_report(result)["pinned_tools"])
+    assert list(tools) == ["exiftool", "ffmpeg", "ffprobe"]
+    for name in ("ffmpeg", "ffprobe"):
+        assert (tools[name]["expected_version"], tools[name]["found_version"]) == (FFMPEG_VERSION, FFMPEG_VERSION)
+        assert tools[name]["status"] == "ok"
+        assert Path(tools[name]["path"]).name == name
+    assert tools["ffmpeg"]["used_by"] == ["extract-unique-frames", "reassemble-video"]
+    assert tools["ffprobe"]["used_by"] == ["extract-unique-frames"]
+
+
 def test_missing_pinned_tool_fails_with_the_report(
     config_home: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -131,9 +145,8 @@ def test_system_dependencies_are_reported_with_their_commands(config_home: Path)
     result = _invoke("--json")
     assert result.exit_code == 0, result.output
     dependencies = _by_name(_report(result)["system_dependencies"])
-    assert list(dependencies) == ["perl", "ffmpeg", "jpegoptim"]
+    assert list(dependencies) == ["perl", "jpegoptim"]  # ffmpeg is pinned, never taken from PATH
     assert dependencies["perl"]["used_by"] == ["compress-image", "inspect"]
-    assert dependencies["ffmpeg"]["used_by"] == ["extract-unique-frames", "reassemble-video"]
     assert dependencies["jpegoptim"]["used_by"] == ["reduce-jpeg-size"]
     perl = dependencies["perl"]
     assert perl["status"] == "ok"
@@ -147,14 +160,14 @@ def test_missing_system_dependency_does_not_fail(config_home: Path, monkeypatch:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "perl").symlink_to(perl)
-    monkeypatch.setenv("PATH", str(bin_dir))  # Perl only: exiftool still runs, ffmpeg and jpegoptim are missing
+    monkeypatch.setenv("PATH", str(bin_dir))  # Perl only: exiftool still runs, jpegoptim is missing
     result = _invoke("--json")
     assert result.exit_code == 0, result.output
     dependencies = _by_name(_report(result)["system_dependencies"])
     assert dependencies["perl"]["path"] == str(bin_dir / "perl")
-    for name in ("ffmpeg", "jpegoptim"):
-        assert (dependencies[name]["found_version"], dependencies[name]["path"]) == (None, None)
-        assert dependencies[name]["status"] == "missing"
+    assert (dependencies["jpegoptim"]["found_version"], dependencies["jpegoptim"]["path"]) == (None, None)
+    assert dependencies["jpegoptim"]["status"] == "missing"
+    assert all(tool["status"] == "ok" for tool in _report(result)["pinned_tools"])
 
 
 # --- Tinify key --------------------------------------------------------------------
@@ -230,6 +243,6 @@ def test_file_without_usable_key_is_not_configured(config_home: Path, content: s
 def test_human_report_names_every_tool_and_the_key_file(config_home: Path):
     result = _invoke()
     assert result.exit_code == 0, result.output
-    for name in ("exiftool", EXIFTOOL_VERSION, "perl", "ffmpeg", "jpegoptim", "reduce-jpeg-size"):
+    for name in ("exiftool", EXIFTOOL_VERSION, "ffmpeg", "ffprobe", FFMPEG_VERSION, "perl", "jpegoptim"):
         assert name in result.stdout
     assert str(config_home / "compression-suite" / "config.toml") in result.stdout

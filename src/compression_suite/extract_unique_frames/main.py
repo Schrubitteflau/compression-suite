@@ -21,6 +21,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from compression_suite.models.geometry import PixelRectangle
 from compression_suite.models.metadata import Metadata, TimestampInfo, VideoInfo
+from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.utils.video import get_video_info
 
 HASH_THRESHOLD = 5
@@ -126,6 +127,7 @@ def extract_unique_frames_to_folder(
         comparison_exclusion_regions: Pixel regions ignored by perceptual comparison
     """
     logger.info(f"Processing video: {video_file}")
+    ffmpeg_path = resolve_tool("ffmpeg")
     video_info = get_video_info(video_file)
     logger.info(f"Video: {video_info.width}x{video_info.height} @ {video_info.fps} fps")
     validate_comparison_exclusion_regions(
@@ -155,8 +157,8 @@ def extract_unique_frames_to_folder(
 
         stream = stream.filter("showinfo")
 
-        frame_extraction_process = stream.output("pipe:", format="rawvideo", pix_fmt="rgb24", vsync="vfr").run_async(
-            pipe_stdout=True, pipe_stderr=True
+        frame_extraction_process = stream.output("pipe:", format="rawvideo", pix_fmt="rgb24", fps_mode="vfr").run_async(
+            cmd=str(ffmpeg_path), pipe_stdout=True, pipe_stderr=True
         )
     except Exception as e:
         logger.error(f"Failed to start FFmpeg: {e}")

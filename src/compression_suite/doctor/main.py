@@ -22,6 +22,7 @@ from compression_suite.utils.pinned_tools import (
 USED_BY: dict[str, tuple[str, ...]] = {
     "exiftool": ("compress-image", "inspect"),
     "ffmpeg": ("extract-unique-frames", "reassemble-video"),
+    "ffprobe": ("extract-unique-frames",),  # reads the video's dimensions, frame rate and duration
     "jpegoptim": ("reduce-jpeg-size",),
 }
 
@@ -38,7 +39,6 @@ class SystemDependency:
 
 SYSTEM_DEPENDENCIES = [
     SystemDependency("perl", ("-e", "print $^V"), r"^v?(\S+)", USED_BY["exiftool"]),  # runs the pinned exiftool
-    SystemDependency("ffmpeg", ("-version",), r"ffmpeg version (\S+)", USED_BY["ffmpeg"]),
     SystemDependency("jpegoptim", ("--version",), r"jpegoptim v(\S+)", USED_BY["jpegoptim"]),
 ]
 
