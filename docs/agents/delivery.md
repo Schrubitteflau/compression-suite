@@ -12,6 +12,8 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
   driven by Playwright installed in a scratch directory outside the repo; load the file in a `<video>` element and
   read `error`, `readyState`, `videoWidth`/`videoHeight` and the console, not only whether the page loads.
 - A fresh worktree has no `.tools/`: `just qa` runs `just install-tools`, which downloads the pinned tools.
+- Real video encodes (x265, `just qa` on video tickets) run one at a time: on this laptop, several at once crashed
+  the session twice during lot 3.
 
 ## Off-limits
 
