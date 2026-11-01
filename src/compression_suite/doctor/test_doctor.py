@@ -55,7 +55,7 @@ def _invoke(*args: str) -> Result:
 def _report(result: Result) -> dict:
     """The doctor report of a `--json` run: `result` on success, `error.details` on failure."""
     document = json.loads(result.stdout)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["command"] == "doctor"
     return document["result"] if document["ok"] else document["error"]["details"]
 

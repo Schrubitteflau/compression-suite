@@ -55,7 +55,7 @@ def _inspect(path: Path) -> dict:
     result = _invoke(path)
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["ok"] is True
     assert document["command"] == "inspect"
     return document["result"]

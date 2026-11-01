@@ -29,7 +29,7 @@ compression_suite preview IMG_0001.HEIC -o /tmp/IMG_0001.jpg --json
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "preview",
   "result": {

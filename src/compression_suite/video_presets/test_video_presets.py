@@ -17,7 +17,7 @@ def _invoke(*args: str) -> Result:
 def _result(result: Result) -> dict:
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["ok"] is True
     assert document["command"] == "video-presets"
     return document["result"]

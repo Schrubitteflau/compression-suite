@@ -26,7 +26,7 @@ compression_suite video-presets --json
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "video-presets",
   "result": {
