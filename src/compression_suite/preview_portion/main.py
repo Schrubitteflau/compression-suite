@@ -16,17 +16,26 @@ import math
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from compression_suite.compress_image.main import validate_input_file
-from compression_suite.compress_video.main import check_video_output
-from compression_suite.display_copy.main import check_not_the_input
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.display_video import display_video_args
+from compression_suite.utils.export_audio import audio_args, kept_audio
 from compression_suite.utils.ffmpeg_output import anonymous_file, run_ffmpeg, write_with_ffmpeg
+from compression_suite.utils.interruptions import never_held
 from compression_suite.utils.pinned_tools import resolve_tool
-from compression_suite.utils.video_presets import VideoPreset, opus_layout_args, resolve_preset
+from compression_suite.utils.video_command import (
+    check_not_the_input,
+    check_video_output,
+    duration_field,
+    elapsed_field,
+    file_field,
+    output_field,
+)
+from compression_suite.utils.video_presets import VideoPreset, resolve_preset
 from compression_suite.utils.video_probe import VideoProbe, ffmpeg_input, probe_video
 
 DEFAULT_DURATION = 3.0
@@ -41,30 +50,28 @@ def _check_seconds(name: str, value: float, positive: bool) -> None:
         )
 
 
-def _decoders(probe: VideoProbe, with_audio: bool) -> tuple[str, ...]:
+def _decoders(probe: VideoProbe, preset: VideoPreset) -> tuple[str, ...]:
     """The input's decoders ffmpeg runs for the encoding: an error logged by one of them makes the input damaged."""
+    kept = set(kept_audio(probe, preset))
     names = [probe.video.get("codec_name")]
-    if with_audio and probe.audio is not None:
-        names.append(probe.audio.get("codec_name"))
-    return tuple(name for name in names if name)
+    names += [stream.get("codec_name") for stream in probe.audio_streams if stream["index"] in kept]
+    return tuple(dict.fromkeys(name for name in names if name))
 
 
 def encode_args(input_path: Path, probe: VideoProbe, preset: VideoPreset, start: float, duration: float) -> list[str]:
     """ffmpeg's arguments encoding the portion as the export does: same encoder settings, same timestamps, the
-    rotation kept as a display matrix. Only the video stream and the first audio stream, unless the preset has no
-    audio.
+    rotation kept as a display matrix, the audio streams the export keeps, each played as the export plays it (see
+    `utils.export_audio`).
 
     `-ss` before the input seeks accurately: the portion starts at the first frame at or after `start`, counted from
     the start of the original. `-t` keeps `duration` seconds, less at the end of the video.
     """
-    audio = probe.audio if preset.audio is not None else None
-    maps = ["-map", f"0:{probe.video['index']}", *(["-map", f"0:{audio['index']}"] if audio is not None else [])]
-    layout = opus_layout_args([(audio.get("channels", 2), audio.get("channel_layout"))]) if audio is not None else []
+    audio = audio_args(input_path, probe, preset, (start, duration))
     return [
-        *("-ss", f"{start:.6f}", "-noautorotate", "-i", ffmpeg_input(input_path), "-t", f"{duration:.6f}"),
-        *maps,
+        *("-ss", f"{start:.6f}", "-noautorotate", "-i", ffmpeg_input(input_path), *audio.inputs),
+        *("-t", f"{duration:.6f}", "-map", f"0:{probe.video['index']}", *audio.maps),
         *preset.ffmpeg_args(),
-        *layout,
+        *audio.options,
         *("-fps_mode", "passthrough", "-enc_time_base:v", "demux", "-map_metadata", "-1"),
     ]
 
@@ -112,8 +119,11 @@ def preview_portion(
     start: float,
     duration: float,
     overwrite: bool,
+    hold: Callable[[], None] = never_held,
 ) -> dict[str, Any]:
     """Encode the portion, render it for display, and return the `result` object of the JSON contract.
+
+    `hold` is called right before the output takes its name (see `utils.interruptions`).
 
     Checks run before any encoding, in this order: preset and CRF, start and duration, input, output being the input,
     format, start within the video, output.
@@ -123,10 +133,11 @@ def preview_portion(
     _check_seconds("start", start, positive=False)
     _check_seconds("duration", duration, positive=True)
     input_path = validate_input_file(input_file)
+    input_stat = input_path.stat()
     output_path = Path(output)
     check_not_the_input(input_path, output_path)
     probe = probe_video(input_path)
-    if start >= probe.duration:
+    if probe.duration is not None and start >= probe.duration:
         raise CommandError(
             ErrorCode.USAGE_ERROR,
             f"The portion starts at {start} s, beyond the end of the video ({probe.duration:.3f} s)",
@@ -138,30 +149,31 @@ def preview_portion(
         encoded = f"/dev/fd/{fd}"
         run_ffmpeg(
             [*encode_args(input_path, probe, preset, start, duration), "-f", preset.container, encoded],
-            _decoders(probe, preset.audio is not None),
+            _decoders(probe, preset),
             (fd,),
+            probe.container,
         )
         offset, length, has_video = _encoded_timing(fd)
         if not has_video:
             raise CommandError(
                 ErrorCode.USAGE_ERROR,
-                f"The portion starts at {start} s, after the last frame of the video ({probe.duration:.3f} s)",
+                f"The portion starts at {start} s, after the last frame of the video",
                 {"start": start, "duration": probe.duration},
             )
         size = os.fstat(fd).st_size
-        write_with_ffmpeg(output_path, lambda path: display_args(encoded, probe, path), pass_fds=(fd,))
+        write_with_ffmpeg(output_path, lambda path: display_args(encoded, probe, path), overwrite, hold, pass_fds=(fd,))
 
     return {
-        "input": input_file,
-        "output": output,
+        "input": file_field(input_file, probe.container, input_stat),
+        "output": output_field(output),
+        "duration_seconds": duration_field(probe),
+        "elapsed_seconds": elapsed_field(started),
         "preset": preset.id,
         "crf": preset.crf,
-        "start_seconds": round(start + offset, 3),
-        "duration_seconds": round(length, 3),
+        "portion": {"start_seconds": round(start + offset, 3), "duration_seconds": round(length, 3)},
         "encoded": {
             "format": preset.container,
             "size_bytes": size,
             "bitrate_kbps": round(size * 8 / length / 1000, 1) if length else None,
         },
-        "elapsed_seconds": round(time.monotonic() - started, 1),
     }

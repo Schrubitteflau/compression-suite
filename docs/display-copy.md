@@ -55,15 +55,16 @@ A copy was needed (the fabricated sample `hevc_rotated.mp4`):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "display-copy",
   "result": {
-    "input": "hevc_rotated.mp4",
+    "input": {"path": "hevc_rotated.mp4", "format": "mp4", "size_bytes": 9769, "mtime": "2024-06-15T10:00:00+00:00"},
+    "output": {"path": "/tmp/hevc_rotated.display.mp4", "format": "mp4", "size_bytes": 8080, "mtime": "2026-11-01T09:30:52.797220+00:00"},
+    "duration_seconds": 1.0,
+    "elapsed_seconds": 0.2,
     "copy_needed": true,
     "copy_reasons": ["video codec hevc"],
-    "output": "/tmp/hevc_rotated.display.mp4",
-    "duration": 1.0,
     "width": 72,
     "height": 128,
     "fps": 30.0,
@@ -73,10 +74,14 @@ A copy was needed (the fabricated sample `hevc_rotated.mp4`):
 }
 ```
 
-No copy needed: `copy_needed` is `false`, `copy_reasons` is empty, there is no `output`, and nothing is written, not even the folder of `--output`. An existing file at `--output` is then left alone, without `--overwrite` too, and the command still succeeds.
+No copy needed: `copy_needed` is `false`, `copy_reasons` is empty, `output` is `null`, and nothing is written, not even the folder of `--output`. An existing file at `--output` is then left alone, without `--overwrite` too, and the command still succeeds.
 
+`input`, `output`, `duration_seconds` and `elapsed_seconds` are the fields every video command gives, with the same values for the same video (see [the common contract](../README.md#the-video-commands-common-contract)):
+
+- **`input`**: the path as given, the container detected on the content (`mp4`, `mov`, `matroska`...), the size and the mtime (ISO 8601, UTC). **`output`**: the same for the copy (`format` always `mp4`, its own mtime), `null` without a copy.
+- **`duration_seconds`**: the video's duration, the container's, to the millisecond; `null` when the container gives none.
+- **`elapsed_seconds`**: the time the command took.
 - **`copy_reasons`**: why the browser may not play the original, in plain English (`video codec hevc`, `pixel format yuv420p10le`, `hdr smpte2084`, `container matroska,webm`, `audio codec pcm_s16le`...), for a log or a tooltip; not a stable code.
-- **`duration`**: in seconds, the container's.
 - **`width`**, **`height`**: as displayed, rotation applied: a phone portrait is taller than wide. Those of the copy too.
 - **`fps`**: the average frame rate, to the thousandth (a phone recording at "30 fps" gives slightly less or more).
 - **`video_codec`**, **`audio_codec`**: those of the original, as ffprobe names them (`hevc`, `h264`, `aac`, `opus`...); `audio_codec` is `null` without audio.
@@ -90,25 +95,25 @@ Before deciding, the video is probed: its first frame is decoded, and its last s
 
 ## Atomic writing
 
-ffmpeg writes into an anonymous file (`O_TMPFILE`) of the output's folder, which gets its name only once complete: a short hidden name (`.<8 hex>.tmp`, so that an output name of up to 255 bytes works), then an atomic rename over the output. A copy interrupted at any point, even by SIGKILL, leaves neither a partial copy nor a temporary file. From the start of ffmpeg to the final rename, SIGTERM, SIGINT and SIGHUP stop ffmpeg and give `interrupted` (exit 130); a SIGHUP already ignored (`nohup`) stays ignored. ffmpeg also stops if compression-suite is killed. The output's folders that the command created are removed again if the copy fails or is interrupted (not after a SIGKILL: they then stay, empty). On a file system without `O_TMPFILE`, a hidden temporary file (`.<random>.tmp`) is used instead: removed on any error or signal it can catch, but left behind by a SIGKILL.
+The writing is shared by the three video commands. ffmpeg writes into an anonymous file (`O_TMPFILE`) of the output's folder, which gets its name only once complete: without `--overwrite`, by a hard link, which fails if a file appeared at the output meanwhile (`output_exists`, that file kept); with it, under a short hidden name (`.<8 hex>.tmp`, so that an output name of up to 255 bytes works), then an atomic rename over the output. A copy interrupted at any point, even by SIGKILL, leaves neither a partial copy nor a temporary file. SIGTERM, SIGINT and SIGHUP, from the moment the command starts its checks until the copy takes its name (while the video is probed too), stop ffmpeg if it runs and give `interrupted` (exit 130); a SIGHUP already ignored (`nohup`) stays ignored. A signal while the process is still starting (Python loading the command, about the first 0.2 to 0.3 s) ends it by that signal (exit 128 + the signal's number, 143 for SIGTERM), with no JSON on stdout and nothing written. Once the copy has its name, a signal no longer changes the outcome, nor the exit code of the JSON document. ffmpeg also stops if compression-suite is killed. The output's folders that the command created are removed again if the copy fails or is interrupted (not after a SIGKILL: they then stay, empty). A new folder that a parallel call removed meanwhile, as it cleaned up after its own interruption, is made again before the copy takes its name. On a file system without `O_TMPFILE`, a hidden temporary file (`.<random>.tmp`) is used instead: removed on any error or signal it can catch, but left behind by a SIGKILL.
 
 ## Errors
 
 | Code | Exit | When |
 |---|---|---|
-| `unsupported_format` | 21 | not a video: an image (detected on the content, a HEIC included), a file ffmpeg doesn't recognise, a file with no video stream (audio only); `details.detected_format` |
-| `input_corrupt` | 27 | a video that can't be decoded: a video container ffprobe can't open, or holding no stream (an MP4 cut before its index, which a phone writes last), whose first frame can't be decoded, whose frames stop short of its end (truncated), or with any decoder error during the copy; the reason in `message`, nothing written |
+| `unsupported_format` | 21 | not a video: an image (detected on the content, a HEIC included), a file ffmpeg doesn't recognise or reads as text, a file with no video stream (audio only); `details.detected_format`: the image format (`jpeg`...), the container (`mp4` for an audio-only M4A), or `unknown` |
+| `input_corrupt` | 27 | a video that can't be decoded: a video container ffprobe can't open, or holding no stream (an MP4 cut before its index, which a phone writes last), whose first frame can't be decoded, whose frames stop short of its end (truncated), or with any decoder error during the copy; the reason in `message`, `details.detected_format` (the container), nothing written |
 | `input_not_found` | 23 | input missing, or not a file |
 | `input_unreadable` | 26 | input present but unreadable |
-| `output_exists` | 24 | a copy is needed and the output exists without `--overwrite`, or is a folder |
+| `output_exists` | 24 | a copy is needed and the output exists without `--overwrite` (before the copy, or appeared during it), is a symbolic link to a missing file without `--overwrite`, or is a folder |
 | `tool_missing` | 30 | pinned ffmpeg or ffprobe not installed (`just install-tools`) |
-| `interrupted` | 130 | SIGINT, SIGTERM or SIGHUP during the copy; nothing written |
+| `interrupted` | 130 | SIGINT, SIGTERM or SIGHUP from the start of the checks until the copy took its name, the probe included; nothing written |
 | `internal_error` | 50 | ffmpeg failed for a reason that doesn't point at the input (disk full, for instance) |
-| `usage_error` | 2 | invalid options, `--output` missing, or the output is the input file (same path, hard link or symbolic link, with or without `--overwrite`), checked before anything is read or written |
+| `usage_error` | 2 | invalid options, `--output` missing, or the output is the input file (same path, hard link or symbolic link, with or without `--overwrite`), checked before anything is read or written; a copy is needed and the output ends with a slash |
 
 ## Limits
 
 - **Damage in the middle of a video that needs no copy** is not detected (see [Damaged videos](#damaged-videos)).
-- **Two simultaneous calls to the same `--output`** without `--overwrite` are not guarded against each other: both can report success, and the last one written wins. WelcomeApp gives each call its own output path.
+- **Two simultaneous calls to the same `--output`** with `--overwrite` both report success, and the last one written wins; without it, the second one to finish gets `output_exists`. WelcomeApp gives each call its own output path.
 - **Non-square pixels**: `width` and `height` are the stored ones, rotation applied; a sample aspect ratio is not applied.
 - **Browsers checked**: Chrome 156 and Firefox 136 under Linux play neither picture of a S23 HEVC (Chrome plays its sound only, Firefox refuses it), and play the copy upright, as well as an H.264 MP4 or MOV, rotated or not.

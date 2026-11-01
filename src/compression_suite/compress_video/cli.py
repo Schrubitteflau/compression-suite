@@ -7,10 +7,10 @@ from typing import Any
 import typer
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-from compression_suite.compress_video.main import Interruptions
 from compression_suite.compress_video.main import compress_video as export_video
 from compression_suite.utils.cli import stderr_console
 from compression_suite.utils.contract import SCHEMA_VERSION, run_command
+from compression_suite.utils.interruptions import Interruptions
 
 COMMAND = "compress-video"
 
@@ -133,5 +133,5 @@ def compress_video(
             )
         return result
 
-    with interruptions:  # SIGINT and SIGTERM, from the first check to the envelope
+    with interruptions:  # SIGINT, SIGTERM and SIGHUP, from the first check to the envelope
         run_command(COMMAND, json_mode, body)

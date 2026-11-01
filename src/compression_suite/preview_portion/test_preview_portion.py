@@ -15,6 +15,7 @@ from click.testing import Result
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.preview_portion import main as preview_portion_main
 from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.video_samples import BLUE, GREEN, H264, HDR_PQ, RED
 
@@ -75,7 +76,7 @@ def _portion(video: Path, output: Path, *args: str) -> dict:
     result = _invoke(video, output, *args)
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert (document["schema_version"], document["ok"], document["command"]) == (1, True, "preview-portion")
+    assert (document["schema_version"], document["ok"], document["command"]) == (2, True, "preview-portion")
     return document["result"]
 
 
@@ -98,11 +99,12 @@ def test_portion_of_3_seconds_is_rendered_in_h264_upright(five_seconds, tmp_path
     output = tmp_path / "portion.mp4"
     result = _portion(five_seconds, output, "--preset", "default", "--start", "1")
 
-    assert result["input"] == str(five_seconds)
-    assert result["output"] == str(output)
+    assert result["input"]["path"] == str(five_seconds)
+    assert result["output"]["path"] == str(output)
+    assert result["duration_seconds"] == pytest.approx(5.0, abs=0.05)
     assert (result["preset"], result["crf"]) == ("default", 32)
-    assert result["start_seconds"] == pytest.approx(1.0, abs=0.001)
-    assert result["duration_seconds"] == pytest.approx(3.0, abs=0.001)
+    assert result["portion"]["start_seconds"] == pytest.approx(1.0, abs=0.001)
+    assert result["portion"]["duration_seconds"] == pytest.approx(3.0, abs=0.001)
     video = _stream(output, "video")
     assert (video["codec_name"], video["pix_fmt"], video["width"], video["height"]) == ("h264", "yuv420p", 72, 128)
     assert video["nb_read_frames"] == "90"
@@ -114,8 +116,8 @@ def test_portion_of_3_seconds_is_rendered_in_h264_upright(five_seconds, tmp_path
 def test_last_portion_is_shorter(five_seconds, tmp_path):
     output = tmp_path / "portion.mp4"
     result = _portion(five_seconds, output, "--preset", "default", "--start", "4")
-    assert result["start_seconds"] == pytest.approx(4.0, abs=0.001)
-    assert result["duration_seconds"] == pytest.approx(1.0, abs=0.001)
+    assert result["portion"]["start_seconds"] == pytest.approx(4.0, abs=0.001)
+    assert result["portion"]["duration_seconds"] == pytest.approx(1.0, abs=0.001)
     assert _stream(output, "video")["nb_read_frames"] == "30"
 
 
@@ -138,12 +140,13 @@ def test_portion_lands_on_the_timeline_of_the_original(five_seconds, tmp_path, p
     output = tmp_path / "portion.mp4"
     result = _portion(five_seconds, output, "--preset", preset, "--start", "1.01")
     original = _frame_times(five_seconds)
-    portion = [result["start_seconds"] + moment for moment in _frame_times(output)]
+    start = result["portion"]["start_seconds"]
+    portion = [start + moment for moment in _frame_times(output)]
     assert portion[0] == pytest.approx(31 / FPS, abs=0.001)  # the first frame at or after 1.01 s
     for moment in portion:
         assert min(abs(moment - frame) for frame in original) < 0.001
     assert portion[-1] == pytest.approx(120 / FPS, abs=0.001)  # the last frame before 4.01 s
-    assert result["start_seconds"] + result["duration_seconds"] == pytest.approx(121 / FPS, abs=0.001)
+    assert start + result["portion"]["duration_seconds"] == pytest.approx(121 / FPS, abs=0.001)
 
 
 @pytest.mark.parametrize(
@@ -487,3 +490,138 @@ def test_interrupted_portion_leaves_nothing(tmp_path, long_hevc, sig, encoder):
     assert not _is_running(ffmpeg)  # ffmpeg doesn't keep encoding on its own
     assert list(output_dir.iterdir()) == []
     assert list(temporary.iterdir()) == []
+
+
+# --- The sound of the export (#25) -----------------------------------------------
+
+
+def _audio_streams(video: Path) -> list[dict]:
+    return [stream for stream in _probe(video)["streams"] if stream["codec_type"] == "audio"]
+
+
+def _audio_span(video: Path) -> tuple[float, float]:
+    """Where the first audio stream starts and ends on the video's timeline, its edit list applied, in seconds."""
+    stream = _audio_streams(video)[0]
+    start = float(stream["start_time"])
+    return start, start + float(stream["duration"])
+
+
+def _late_audio(path: Path) -> Path:
+    """HEVC and AAC whose sound starts 50 ms after the picture and lasts 0.9 s: its audio track starts with an empty
+    edit, then plays its media from the start, as a Galaxy writes it."""
+    _ffmpeg(
+        *("-f", "lavfi", "-i", _pattern(1)),
+        *("-itsoffset", "0.05", "-f", "lavfi", "-i", "sine=duration=0.9:sample_rate=48000"),
+        *("-c:v", "libx265", "-x265-params", "log-level=error", "-tag:v", "hvc1", "-c:a", "aac", str(path)),
+    )
+    return path
+
+
+def test_every_audio_track_is_kept_as_in_the_export(tmp_path):
+    video = tmp_path / "two.mp4"
+    _ffmpeg(
+        *("-f", "lavfi", "-i", _pattern(1), "-f", "lavfi", "-i", "sine=frequency=440:duration=1"),
+        *("-f", "lavfi", "-i", "sine=frequency=880:duration=1", "-map", "0", "-map", "1", "-map", "2"),
+        *("-c:v", "libx264", "-c:a", "aac", "-ac:a:1", "2", str(video)),
+    )
+    output = tmp_path / "portion.mp4"
+    _portion(video, output, "--preset", "default", "--start", "0")
+    assert [(stream["codec_name"], stream["channels"]) for stream in _audio_streams(output)] == [
+        ("opus", 1),
+        ("opus", 2),
+    ]
+
+
+def _export_audio_span(video: Path, tmp_path: Path) -> tuple[float, float]:
+    """Where the sound of the export of a video starts and ends."""
+    export = tmp_path / "export.mp4"
+    result = runner.invoke(app, ["compress-video", str(video), "--preset", "default", "-o", str(export), "--json"])
+    assert result.exit_code == 0, result.output
+    return _audio_span(export)
+
+
+def test_late_sound_starts_and_ends_as_in_the_export(tmp_path):
+    video = _late_audio(tmp_path / "late.mp4")
+    output = tmp_path / "portion.mp4"
+    result = _portion(video, output, "--preset", "default", "--start", "0")
+    assert result["portion"]["start_seconds"] == 0.0
+    start, end = _audio_span(output)
+    export_start, export_end = _export_audio_span(video, tmp_path)
+    assert export_end == pytest.approx(0.95, abs=0.001)  # ffmpeg alone ends it 50 ms late
+    assert (start, end) == (pytest.approx(export_start, abs=0.001), pytest.approx(export_end, abs=0.001))
+
+
+def test_a_later_portion_of_late_sound_ends_where_the_export_does(tmp_path):
+    video = _late_audio(tmp_path / "late.mp4")
+    output = tmp_path / "portion.mp4"
+    result = _portion(video, output, "--preset", "default", "--start", "0.5")
+    portion_start = result["portion"]["start_seconds"]
+    assert portion_start == pytest.approx(0.5, abs=0.001)
+    _, end = _audio_span(output)
+    _, export_end = _export_audio_span(video, tmp_path)
+    assert portion_start + end == pytest.approx(export_end, abs=0.001)
+
+
+def _late_short_then_full_audio(path: Path) -> Path:
+    """2 s of video with two audio tracks: a mono one that starts 50 ms late (an empty edit first) and stops at
+    0.45 s, then a stereo one that lasts the whole video."""
+    _ffmpeg(
+        *("-f", "lavfi", "-i", _pattern(2)),
+        *("-itsoffset", "0.05", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4:sample_rate=48000"),
+        *("-f", "lavfi", "-i", "sine=frequency=880:duration=2:sample_rate=48000"),
+        *("-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-c:a", "aac", "-ac:a:1", "2", str(path)),
+    )
+    return path
+
+
+def _max_volume(video: Path, audio_index: int) -> float:
+    """The loudest sample of an audio stream, in dB (-91 for silence)."""
+    stderr = subprocess.run(
+        [str(resolve_tool("ffmpeg")), "-nostdin", "-i", str(video), "-map", f"0:a:{audio_index}"]
+        + ["-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stderr
+    return float(stderr.split("max_volume:")[1].split("dB")[0])
+
+
+def test_a_late_track_with_no_sound_in_the_portion_stays_there_as_silence(tmp_path):
+    video = _late_short_then_full_audio(tmp_path / "two.mp4")
+    output = tmp_path / "portion.mp4"
+    _portion(video, output, "--preset", "default", "--start", "1", "--duration", "0.5")
+    audio = _audio_streams(output)
+    assert [(stream["codec_name"], stream["channels"]) for stream in audio] == [("opus", 1), ("opus", 2)]
+    assert _max_volume(output, 0) < -80  # the first track, as in the export, silent here
+    assert _max_volume(output, 1) > -40  # the second track's sound
+
+
+def test_a_file_appearing_at_the_output_during_the_portion_is_kept(five_seconds, tmp_path, monkeypatch):
+    output = tmp_path / "portion.mp4"
+    write = preview_portion_main.write_with_ffmpeg
+
+    def write_meanwhile(output_path, build_args, *args, **kwargs):
+        def build_and_write(path):
+            output.write_bytes(b"written meanwhile")
+            return build_args(path)
+
+        write(output_path, build_and_write, *args, **kwargs)
+
+    monkeypatch.setattr(preview_portion_main, "write_with_ffmpeg", write_meanwhile)
+    result = _invoke(five_seconds, output, "--preset", "dance", "--start", "0", "--duration", "0.5")
+    assert result.exit_code == 24, result.output
+    assert json.loads(result.stdout)["error"]["code"] == "output_exists"
+    assert output.read_bytes() == b"written meanwhile"
+    assert [path.name for path in tmp_path.iterdir()] == ["portion.mp4"]
+
+
+def test_a_last_portion_with_a_silent_late_track_ends_with_the_video(tmp_path):
+    video = _late_short_then_full_audio(tmp_path / "two.mp4")
+    output = tmp_path / "portion.mp4"
+    result = _portion(video, output, "--preset", "default", "--start", "1.5", "--duration", "3")
+    assert result["portion"]["duration_seconds"] == pytest.approx(0.5, abs=0.03)
+    streams = _probe(output)["streams"]
+    video_duration = float(next(s for s in streams if s["codec_type"] == "video")["duration"])
+    silent = _audio_streams(output)[0]
+    assert silent["channels"] == 1
+    assert float(silent["duration"]) <= video_duration + 0.03
