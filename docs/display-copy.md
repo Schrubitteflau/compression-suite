@@ -109,5 +109,6 @@ ffmpeg writes into an anonymous file (`O_TMPFILE`) of the output's folder, which
 ## Limits
 
 - **Damage in the middle of a video that needs no copy** is not detected (see [Damaged videos](#damaged-videos)).
+- **Two simultaneous calls to the same `--output`** without `--overwrite` are not guarded against each other: both can report success, and the last one written wins. WelcomeApp gives each call its own output path.
 - **Non-square pixels**: `width` and `height` are the stored ones, rotation applied; a sample aspect ratio is not applied.
 - **Browsers checked**: Chrome 156 and Firefox 136 under Linux play neither picture of a S23 HEVC (Chrome plays its sound only, Firefox refuses it), and play the copy upright, as well as an H.264 MP4 or MOV, rotated or not.

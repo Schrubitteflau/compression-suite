@@ -11,6 +11,10 @@ From the start of ffmpeg to the final rename, SIGTERM and SIGHUP are turned into
 the command reports `interrupted`. ffmpeg also gets SIGKILL if compression-suite dies first, so it never keeps
 encoding on its own.
 
+A command that runs ffmpeg twice (the preview portions) writes the first output into an `anonymous_file` of the
+temporary folder, with `run_ffmpeg`, and hands it to the second run as `/dev/fd/<fd>` (`pass_fds`): it has no name,
+so nothing is left after any interruption.
+
 Any error of the input's demuxer or decoders makes the input damaged (`input_corrupt`), even when ffmpeg conceals it
 and succeeds: ffmpeg is pinned, so a decoder error means a damaged file, as for the images.
 """
@@ -156,7 +160,10 @@ def _give_name(fd: int, output_path: Path) -> None:
 
 
 def write_with_ffmpeg(
-    output_path: Path, build_args: Callable[[str], list[str]], decoders: tuple[str, ...] = ()
+    output_path: Path,
+    build_args: Callable[[str], list[str]],
+    decoders: tuple[str, ...] = (),
+    pass_fds: tuple[int, ...] = (),
 ) -> None:
     """Run the pinned ffmpeg to write `output_path` atomically.
 
@@ -166,7 +173,8 @@ def write_with_ffmpeg(
     `build_args` receives the path ffmpeg must write to and returns ffmpeg's arguments (inputs, options, and that
     path, with `-f` set: the path has no extension; outputs that write nothing, `-f null -`, may follow).
     `decoders` names the decoders of the input that ffmpeg runs (`hevc`, `pcm_s16le`...): an error logged by one of
-    them makes the input damaged.
+    them makes the input damaged. `pass_fds` are file descriptors ffmpeg inherits, to read an `anonymous_file` as
+    `/dev/fd/<fd>`.
 
     Raises:
         CommandError: `input_corrupt` or `internal_error` if ffmpeg fails, `tool_missing` if it is not usable.
@@ -176,7 +184,7 @@ def write_with_ffmpeg(
     created = _make_folders(output_path.parent)
     try:
         with _signals_interrupt():
-            _write(ffmpeg, output_path, build_args, decoders)
+            _write(ffmpeg, output_path, build_args, decoders, pass_fds)
     except BaseException:
         for folder in reversed(created):  # the deepest first; only if empty
             with contextlib.suppress(OSError):
@@ -196,12 +204,18 @@ def _make_folders(folder: Path) -> list[Path]:
     return missing
 
 
-def _write(ffmpeg: Path, output_path: Path, build_args: Callable[[str], list[str]], decoders: tuple[str, ...]) -> None:
+def _write(
+    ffmpeg: Path,
+    output_path: Path,
+    build_args: Callable[[str], list[str]],
+    decoders: tuple[str, ...],
+    pass_fds: tuple[int, ...],
+) -> None:
     """The run and the rename, under the signal handlers, into the output's existing folder."""
     fd = _open_anonymous(output_path.parent)
     if fd is not None:
         try:
-            failure = ffmpeg_failure(_run_ffmpeg(ffmpeg, build_args(f"/dev/fd/{fd}"), (fd,)), decoders)
+            failure = ffmpeg_failure(_run_ffmpeg(ffmpeg, build_args(f"/dev/fd/{fd}"), (fd, *pass_fds)), decoders)
             if failure is not None:
                 raise failure
             _give_name(fd, output_path)
@@ -214,10 +228,43 @@ def _write(ffmpeg: Path, output_path: Path, build_args: Callable[[str], list[str
     tmp_path = Path(tmp_name)
     try:
         tmp_path.chmod(0o666 & ~current_umask())
-        failure = ffmpeg_failure(_run_ffmpeg(ffmpeg, build_args(str(tmp_path)), ()), decoders)
+        failure = ffmpeg_failure(_run_ffmpeg(ffmpeg, build_args(str(tmp_path)), pass_fds), decoders)
         if failure is not None:
             raise failure
         os.replace(tmp_path, output_path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+@contextlib.contextmanager
+def anonymous_file() -> Iterator[int]:
+    """A scratch file of the temporary folder, readable and writable, that has no name: it vanishes once closed,
+    even if the process is killed. ffmpeg reaches it as `/dev/fd/<fd>`, given in `pass_fds`.
+
+    On a file system without `O_TMPFILE`, a named file is created and unlinked at once.
+    """
+    folder = Path(tempfile.gettempdir())
+    fd = _open_anonymous(folder)
+    if fd is None:
+        fd, name = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")
+        os.unlink(name)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def run_ffmpeg(args: list[str], decoders: tuple[str, ...] = (), pass_fds: tuple[int, ...] = ()) -> None:
+    """Run the pinned ffmpeg to its end, with the signal handling and the error rules of `write_with_ffmpeg`, for an
+    output it doesn't write: an `anonymous_file`, for instance.
+
+    Raises:
+        CommandError: `input_corrupt` or `internal_error` if ffmpeg fails, `tool_missing` if it is not usable.
+        KeyboardInterrupt: on SIGINT, SIGTERM or SIGHUP, once ffmpeg is killed.
+    """
+    ffmpeg = resolve_tool("ffmpeg")
+    with _signals_interrupt():
+        failure = ffmpeg_failure(_run_ffmpeg(ffmpeg, args, pass_fds), decoders)
+    if failure is not None:
+        raise failure
