@@ -233,6 +233,7 @@ def test_result_describes_input_output_duration_and_settings(phone_video: Path, 
     result = _compress(source, output)
     elapsed = result.pop("elapsed_seconds")
     assert isinstance(elapsed, float) and elapsed >= 0
+    assert result.pop("metadata")["unexpected_losses"] == []  # see test_metadata_diff
     assert result == {
         "input": {
             "path": str(source),
