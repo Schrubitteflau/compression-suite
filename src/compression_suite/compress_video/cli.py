@@ -125,6 +125,12 @@ def compress_video(
             f"in {result['elapsed_seconds']:.1f} s, preset {result['preset']}, CRF {result['crf']}",
             highlight=False,
         )
+        unexpected = result["metadata"]["unexpected_losses"]
+        if unexpected:
+            lost = ", ".join(loss["tag"] for loss in unexpected)
+            stderr_console.print(
+                f"[bold yellow]Unexpected metadata losses:[/bold yellow] {lost}", highlight=False, soft_wrap=True
+            )
         return result
 
     with interruptions:  # SIGINT and SIGTERM, from the first check to the envelope

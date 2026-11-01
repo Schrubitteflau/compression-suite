@@ -21,8 +21,11 @@ from typing import Any
 from compression_suite.compress_image.main import check_output, current_umask, iso_mtime, validate_input_file
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.formats import UNKNOWN_FORMAT, detect_file_format, detect_file_video_container
+from compression_suite.utils.metadata_diff import REENCODING_REASON, ExpectedLoss, read_metadata
 from compression_suite.utils.pinned_tools import resolve_tool
-from compression_suite.utils.video_presets import VideoPreset, opus_layout_args, resolve_preset
+from compression_suite.utils.quicktime_boxes import add_user_data_boxes, edit_lists, user_data_boxes
+from compression_suite.utils.video_metadata import diff_video_metadata, match_tracks, track_groups
+from compression_suite.utils.video_presets import VideoPreset, opus_layout, opus_layout_args, resolve_preset
 
 # Called with the seconds encoded so far and the duration of the video (None when unknown)
 ProgressCallback = Callable[[float, float | None], None]
@@ -41,6 +44,52 @@ TRACK_DATE_TAGS = ("TrackCreateDate", "TrackModifyDate", "MediaCreateDate", "Med
 QUICKTIME_CONTAINERS = ("mp4", "mov", "3gp")
 
 SUPPORTED_CONTAINERS = "mp4, mov, 3gp, matroska, webm, avi, mpegts"
+
+# Losses decided by compression-suite, shown with their reason in the metadata diff. A loss found on a real video must
+# first be fixed by a copy (EXIFTOOL_COPIED_GROUPS, quicktime_dates): only a loss that can't be avoided belongs here.
+# The encoding parameters, which the export chooses anew: brands, sizes and offsets, time scales, codec, encoder, bit
+# rates, sample rate. The durations of the media (`mdhd`) count the delay of x265's B-frames and of Opus's priming,
+# that the edit list removes: the duration of the movie and of each track (`mvhd`, `tkhd`) is still compared.
+REENCODING_LOSSES = [
+    ExpectedLoss(pattern, REENCODING_REASON)
+    for pattern in (
+        "QuickTime:MajorBrand",
+        "QuickTime:MinorVersion",
+        "QuickTime:CompatibleBrands",
+        "QuickTime:MediaDataSize",
+        "QuickTime:MediaDataOffset",
+        "QuickTime:TimeScale",
+        "Track*:MediaTimeScale",
+        "Track*:MediaDuration",
+        "Track*:CompressorID",
+        "Track*:CompressorName",
+        "Track*:BitDepth",
+        "Track*:VideoFrameRate",
+        "Track*:BufferSize",
+        "Track*:MaxBitrate",
+        "Track*:AverageBitrate",
+        "Track*:AudioFormat",
+        "Track*:AudioSampleRate",
+        "Track*:AudioBitsPerSample",
+    )
+]
+# Track IDs the export gives anew, numbering its tracks from 1 (a phone's may have gaps, its own data tracks among
+# them): each track's, the next one free, the timecode track a video track refers to (ffmpeg writes its own, see
+# `match_tracks`)
+RENUMBERED_TRACKS_LOSSES = [
+    ExpectedLoss(pattern, "pistes renumérotées par l'export")
+    for pattern in ("Track*:TrackID", "QuickTime:NextTrackID", "Track*:TimecodeTrack")
+]
+# Boxes of the user data neither ffmpeg nor exiftool write, put back raw: Samsung's `smta` (the phone's model)
+RAW_USER_DATA_BOXES = (b"smta",)
+# When they can't be: an output whose 32-bit chunk offsets would overflow once moved by them (close to 4 GiB). Only
+# the model is expected: any other Samsung tag lost would be a box of Samsung's this export doesn't know
+RAW_USER_DATA_LOSS = ExpectedLoss(
+    "Samsung:SamsungModel",
+    "boîte Samsung « smta » : ne peut être remise, la vidéo dépasserait les 4 Go qu'adressent ses index",
+)
+DROPPED_TRACK_REASON = "piste non conservée : l'export ne garde que la vidéo et l'audio (données, sous-titres…)"
+AUDIO_HANDLER = "Audio Track"
 
 # Demuxers ffprobe may pick for a file that holds no video at all (text, still images)
 NOT_VIDEO_DEMUXERS = ("tty", "image2", "png_pipe", "jpeg_pipe", "lavfi")
@@ -222,7 +271,33 @@ def output_streams(source: VideoSource, preset: VideoPreset) -> tuple[int, ...]:
     return (source.video_index, *audio)
 
 
-def ffmpeg_command(ffmpeg: Path, path: Path, source: VideoSource, destination: Path, preset: VideoPreset) -> list[str]:
+def delayed_audio(path: Path, source: VideoSource) -> dict[int, tuple[float, float, float]]:
+    """The audio streams starting with an empty edit then one edit of media, by stream index: the delay, the media
+    start and the duration played, in seconds (see `EditList.delayed_start`).
+
+    ffmpeg plays such a track wrongly: it moves its end by the length of the empty edit, cutting it (a Galaxy's sound,
+    starting a few milliseconds after the picture) or making it longer. The export plays their edit itself.
+    """
+    if source.container not in QUICKTIME_CONTAINERS:
+        return {}
+    edits = edit_lists(path)
+    delayed = {}
+    for track in source.audio:
+        edit = edits.get(source.track_ids.get(track.index, -1))
+        start = edit.delayed_start() if edit is not None else None
+        if start is not None:
+            delayed[track.index] = start
+    return delayed
+
+
+def ffmpeg_command(
+    ffmpeg: Path,
+    path: Path,
+    source: VideoSource,
+    destination: Path,
+    preset: VideoPreset,
+    delayed: dict[int, tuple[float, float, float]] | None = None,
+) -> list[str]:
     """The ffmpeg command encoding the video stream and every audio stream into an MP4.
 
     Each audio stream is encoded with the preset's audio settings, downmixed to the nearest layout Opus accepts when
@@ -236,12 +311,27 @@ def ffmpeg_command(ffmpeg: Path, path: Path, source: VideoSource, destination: P
     - `-map_metadata 0`: dates of the movie and of its tracks. Without its `location`, which ffmpeg would write as
       a 3GPP `loci` box, a second GPS the original doesn't have: exiftool copies the original's back;
     - `+faststart`: the index first, so that a player starts before the whole file is read.
+
+    An audio stream of `delayed` (see `delayed_audio`) is read from a second input that ignores the edit lists, and
+    its edit is played by filters: the media from its start for the duration of the edit, delayed by the empty edit.
     """
+    delayed = delayed or {}
+    streams = output_streams(source, preset)
+    maps = [arg for index in streams for arg in ("-map", f"{1 if index in delayed else 0}:{index}")]
+    second_input = ("-ignore_editlist", "1", "-i", tool_path(path)) if set(delayed) & set(streams) else ()
+    audio = [index for index in streams if index != source.video_index]
+    trims = []
+    for position, index in enumerate(audio):
+        if index in delayed:
+            delay, start, duration = delayed[index]
+            edit = f"atrim=start={start:.9f}:duration={duration:.9f},asetpts=PTS-STARTPTS+{delay:.9f}/TB"
+            trims += [f"-filter:a:{position}", edit]
     return [
         str(ffmpeg),
         *("-nostdin", "-v", "error", "-xerror", "-nostats", "-progress", "pipe:1", "-y"),
-        *("-noautorotate", "-i", tool_path(path)),
-        *(arg for index in output_streams(source, preset) for arg in ("-map", f"0:{index}")),
+        *("-noautorotate", "-i", tool_path(path), *second_input),
+        *maps,
+        *trims,
         *(
             "-map_metadata",
             "0",
@@ -334,6 +424,24 @@ def copy_metadata(exiftool: Path, path: Path, destination: Path, dates: list[str
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         raise CommandError(ErrorCode.METADATA_COPY_FAILED, f"exiftool failed: {_last_lines(result.stderr)}")
+
+
+def put_back_user_data(path: Path, destination: Path, source: VideoSource) -> bool:
+    """Put back raw into the output the boxes of the original's user data neither ffmpeg nor exiftool write
+    (RAW_USER_DATA_BOXES), unless the output has them. False when they can't be (a 32-bit chunk offset would
+    overflow): the output is left as it was, and the loss is expected (RAW_USER_DATA_LOSS).
+    """
+    if source.container not in QUICKTIME_CONTAINERS:
+        return True
+    present = {box[4:8] for box in user_data_boxes(destination, RAW_USER_DATA_BOXES)}
+    missing = [box for box in user_data_boxes(path, RAW_USER_DATA_BOXES) if box[4:8] not in present]
+    if not missing:
+        return True
+    try:
+        add_user_data_boxes(destination, missing)
+    except ValueError:
+        return False
+    return True
 
 
 @contextlib.contextmanager
@@ -438,7 +546,7 @@ def compress_video(
 
     with temporary_output(output_path) as temporary:
         on_progress(0.0, duration)
-        command = ffmpeg_command(ffmpeg, input_path, source, temporary, preset)
+        command = ffmpeg_command(ffmpeg, input_path, source, temporary, preset, delayed_audio(input_path, source))
         exit_code, errors = encode(command, duration, on_progress)
         # An error ffmpeg reports without failing (a truncated Matroska) is checked as a failure is
         if exit_code != 0 or errors.strip():
@@ -448,13 +556,22 @@ def compress_video(
             if exit_code != 0:
                 raise CommandError(ErrorCode.INTERNAL_ERROR, f"ffmpeg failed: {_last_lines(errors)}")
         copy_metadata(exiftool, input_path, temporary, quicktime_dates(exiftool, input_path, source, streams))
+        user_data_put_back = put_back_user_data(input_path, temporary, source)
+        # Read before its dates are set: a read may refresh the atime
+        before = read_metadata(exiftool, input_path)
+        after = match_tracks(before, read_metadata(exiftool, temporary), [source.track_ids.get(s) for s in streams])
         # Last: exiftool rewrites the file. Giving it its name keeps the dates.
         os.utime(temporary, ns=(input_stat.st_atime_ns, input_stat.st_mtime_ns))
         hold_interruptions()
         put_in_place(temporary, output_path, overwrite)
 
     output_stat = output_path.stat()
-    # A clean place for the metadata diff (#24): `"metadata": diff_metadata(...)`, next to `input` and `output`.
+    metadata = diff_video_metadata(
+        before,
+        after,
+        export_expected_losses(before, after, source, preset, user_data_put_back),
+        mtimes=(iso_mtime(input_stat), iso_mtime(output_stat)),
+    )
     return {
         "input": {
             "path": input_file,
@@ -472,4 +589,37 @@ def compress_video(
         "elapsed_seconds": round(time.monotonic() - started, 1),
         "preset": preset.id,
         "crf": preset.crf,
+        "metadata": metadata,
     }
+
+
+def export_expected_losses(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    source: VideoSource,
+    preset: VideoPreset,
+    user_data_put_back: bool = True,
+) -> list[ExpectedLoss]:
+    """The losses an export causes on purpose, with their reason: the encoding parameters, each audio track Opus
+    can't hold in its layout (downmixed), each track the export doesn't keep (`after`'s tracks named after the
+    original's, see `match_tracks`), Samsung's model when its box couldn't be put back (see `put_back_user_data`),
+    and the container of an original that isn't a QuickTime one."""
+    losses = [] if user_data_put_back else [RAW_USER_DATA_LOSS]
+    by_id = {before[f"{group}:TrackID"]: group for group in track_groups(before) if f"{group}:TrackID" in before}
+    for track in source.audio if preset.audio else ():
+        target, group = opus_layout(track.channels, track.layout), by_id.get(source.track_ids.get(track.index))
+        if group is not None and target != track.layout:
+            reason = f"Opus ne prend pas la disposition {track.layout or 'inconnue'} : piste mixée en {target}"
+            losses.append(ExpectedLoss(f"{group}:AudioChannels", reason))
+    kept = set(track_groups(after))
+    dropped = [group for group in by_id.values() if group not in kept]
+    for group in dropped:
+        audio = before.get(f"{group}:HandlerType") == AUDIO_HANDLER
+        reason = f"piste audio retirée par le préréglage « {preset.label} »" if audio else DROPPED_TRACK_REASON
+        losses.append(ExpectedLoss(f"{group}:*", reason))
+    if dropped:  # the movie lasts as long as its longest track: each kept track's own duration is still compared
+        losses.append(ExpectedLoss("QuickTime:Duration", "durée du film : celle des pistes gardées"))
+    losses += [*REENCODING_LOSSES, *RENUMBERED_TRACKS_LOSSES]
+    if source.container not in QUICKTIME_CONTAINERS:
+        losses.append(ExpectedLoss("*", f"conteneur {source.container} converti en MP4"))
+    return losses

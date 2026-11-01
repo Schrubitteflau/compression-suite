@@ -13,11 +13,12 @@ from typing import Any
 
 from compression_suite.compress_image.main import SUPPORTED_FORMATS, iso_mtime, validate_input_file
 from compression_suite.utils.decoding import corruption_reason
-from compression_suite.utils.formats import UNKNOWN_FORMAT, detect_file_format
+from compression_suite.utils.formats import UNKNOWN_FORMAT, detect_file_format, detect_file_video_container
 from compression_suite.utils.metadata_diff import important_values, pixel_transparency, read_metadata
 from compression_suite.utils.motion_photo import detect_motion_photo
 from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.utils.seft import FileBytes
+from compression_suite.utils.video_metadata import video_important_values
 
 DEFAULT_MIME_TYPE = "application/octet-stream"
 
@@ -69,6 +70,12 @@ def inspect_file(input_file: str) -> dict[str, Any]:
     with mapped_file(path) as data:
         motion_photo = detect_motion_photo(data, tags)
     corrupt_reason = corruption_reason(path, detected_format)
+    # A video gets the important fields of compress-video's diff; an image (HEIC included, an ISO media file too), and
+    # any other file, those of compress-image's
+    if detected_format == UNKNOWN_FORMAT and detect_file_video_container(path) is not None:
+        important = video_important_values(tags, mtime)
+    else:
+        important = important_values(tags, mtime, pixel_transparency(path))
     return {
         "path": input_file,
         "format": fmt,
@@ -78,6 +85,6 @@ def inspect_file(input_file: str) -> dict[str, Any]:
         "compressible": detected_format in SUPPORTED_FORMATS,  # what compress-image itself checks
         "motion_photo": motion_photo,
         "corrupt": {"detected": corrupt_reason is not None, "reason": corrupt_reason},
-        "important": important_values(tags, mtime, pixel_transparency(path)),
+        "important": important,
         "metadata": tags,
     }

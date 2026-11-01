@@ -37,13 +37,41 @@ compression_suite compress-video clip.mp4 --preset default -o /tmp/clip.mp4 --js
 - Other streams are not kept: subtitles, cover arts, data tracks (Apple's `mebx` metadata, Samsung's).
 - The video is decoded without applying its rotation: the pixels are stored as in the original, and the rotation stays in the metadata (the track's display matrix). A player shows the output the same way as the original.
 - Every frame is kept, at its own time, in the original's time base.
+- An audio track that starts after the picture (an edit list beginning with an empty edit, as a Galaxy writes its sound, a few milliseconds late) keeps its start and its length: the export plays that edit itself, ffmpeg alone would move the track's end by the length of the empty edit.
 - The index (`moov`) is written at the start of the file, so that a player can start before reading it all.
 
 ## Metadata
 
-ffmpeg keeps the rotation, the track languages and handler names. It writes the creation date into every QuickTime date, modification dates included, and turns a zero date into the creation date: for an MP4, MOV or 3GP original, exiftool writes back the original's dates, those of the movie (`CreateDate`, `ModifyDate`) and of each track (`TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate`, found by track ID), zero dates included. A Matroska, WebM, AVI or MPEG-TS original has no such dates: the output's come from its `creation_time`, if any. exiftool also copies back from the original what ffmpeg doesn't write in an MP4: the user data (`©xyz` GPS of Android phones, author, Samsung's play mode), the `mdta` keys (Android version, capture frame rate and time zone; Apple's location and model), the item list and the XMP. ffmpeg's own copy of the location (a 3GPP `loci` box) is not written: the output would hold a second GPS the original doesn't have.
+ffmpeg keeps the rotation, the track languages and handler names. It writes the creation date into every QuickTime date, modification dates included, and turns a zero date into the creation date: for an MP4, MOV or 3GP original, exiftool writes back the original's dates, those of the movie (`CreateDate`, `ModifyDate`) and of each track (`TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate`, found by track ID), zero dates included. A Matroska, WebM, AVI or MPEG-TS original has no such dates: the output's come from its `creation_time`, if any. exiftool also copies back from the original what ffmpeg doesn't write in an MP4: the user data (`©xyz` GPS of Android phones, author, Samsung's play mode), the `mdta` keys (Android version, capture frame rate and time zone; Apple's location and model), the item list and the XMP. ffmpeg's own copy of the location (a 3GPP `loci` box) is not written: the output would hold a second GPS the original doesn't have. Samsung's `smta` box (the phone's model), which neither ffmpeg nor exiftool writes, is put back raw into the output's user data: the media data after the index moves by its size, and every chunk offset with it. When it can't be (an output close to 4 GiB, whose 32-bit chunk offsets would overflow), the output is kept without it, and the model is an expected loss.
 
-Some fields change by nature (brands, sizes, bitrates, encoder name, durations of a few milliseconds for Opus) and a few can't be written back (Samsung's `smta` box, giving the phone's model). The diff of the metadata before and after is not reported yet.
+Some fields change by nature (brands, sizes, bitrates, encoder name, track IDs). The [metadata diff](#metadata-diff) lists them all.
+
+### Metadata diff
+
+`result.metadata` compares the tags of the original and of the output, read by the pinned exiftool on every group (`exiftool -j -G1 -a`, tags keyed `Group:Name`), in the same shape as [`compress-image`'s](compress-image.md#metadata-diff---json): `important`, `unexpected_losses`, `expected_losses`, `added`, `before`, `after`. The ignored groups are the same (`System`, `Composite`, `ExifTool`).
+
+- **Tracks**: exiftool numbers the tracks of each file in order (`Track1`, `Track2`…), and the export numbers them anew: a dropped data track, or a track ffmpeg adds (the timecode track it writes for an original that has one), would shift them. In `after`, each track of the output is named after the original track it comes from (found by its `TrackID`), so that a track is compared with its own original, and a track the export doesn't keep is lost as a whole. A track of the output's own (ffmpeg's timecode track) keeps its name, or takes the next number free when an original track has it.
+- **`important`**: always these fields, in this order, even when intact, with `before`, `after`, `source` and `status` as for images (`same`, `lost`, `changed`, `absent`):
+  - `capture_date`: Apple's `Keys:CreationDate` (local time with its offset, `2024:06:01 10:00:00+02:00`), else the movie's `QuickTime:CreateDate`, stored in UTC and given in the same form: in the local time of the offset a Galaxy records (`Keys:AndroidTimeZone`, `+0200`), else in UTC with `+00:00`; else a Matroska, AVI or XMP date, as exiftool reads it, else the file's mtime (`source: "file_mtime"`). A date never set (`0000:00:00 00:00:00`) counts as absent
+  - `gps`: `{coordinates}`, as exiftool reads Apple's `Keys:GPSCoordinates` or Android's `UserData:GPSCoordinates` (`©xyz`)
+  - `camera`: `{make, model}` from Apple's or Android's keys or the user data, else `{model}` from Samsung's `smta` box (`Samsung:SamsungModel`)
+  - `dimensions`: `{width, height}` of the video track as displayed, its rotation applied: a portrait video stored 1920×1080 is `{width: 1080, height: 1920}`
+  - `rotation`: the clockwise rotation a player applies to the video track (0, 90, 180 or 270), read on its display matrix (`source: "Track1:MatrixStructure"`)
+- **`expected_losses`** (`tag`, `before`, `reason`), declared in `compress_video/main.py`:
+  - the encoding parameters the export chooses anew, with the reason « réencodage »: every `File` field (`FileType`… for a MOV original) but the dimensions; the brands, media data size and offset and time scale of the movie; the time scale, media duration, compressor, bit depth, frame rate, buffer size and bit rates of each track; the audio format, sample rate and bits per sample. The media durations (`mdhd`) count the delay of x265's B-frames and Opus's priming, which the edit list removes: the durations of the movie and of each track (`mvhd`, `tkhd`) are still compared
+  - the track IDs given anew, the export numbering its tracks from 1 (`TrackID` of each track, `QuickTime:NextTrackID`, a video track's `TimecodeTrack`), « pistes renumérotées par l'export »
+  - every audio track with a preset without audio (`dance`), with the reason « piste audio retirée par le préréglage « Danse » »
+  - when a track is dropped, the duration of the movie (`QuickTime:Duration`), which lasts as long as its longest track: a phone's sound often lasts a few milliseconds longer than its picture. « durée du film : celle des pistes gardées »; the duration of each kept track is still compared
+  - every other track the export doesn't keep (data tracks: Apple's `mebx`, Samsung's, a timecode; subtitles), « piste non conservée : l'export ne garde que la vidéo et l'audio (données, sous-titres…) »
+  - the channel count of an audio track downmixed for Opus (see [What is encoded](#what-is-encoded)), with the layouts: « Opus ne prend pas la disposition 2.1 : piste mixée en stereo »
+  - an odd stored width or height cropped by one, « largeur ou hauteur impaire : dernière colonne ou ligne retirée (x265 en 4:2:0) »
+  - only when its box can't be put back (see [Metadata](#metadata)), Samsung's model (`Samsung:SamsungModel`), « boîte Samsung « smta » : ne peut être remise, la vidéo dépasserait les 4 Go qu'adressent ses index »: `camera` is then `lost`. Any other Samsung tag lost (the `sefd` box of a slow-motion clip, after the media data) is unexpected
+  - for a Matroska, WebM, AVI or MPEG-TS original, every other loss, « conteneur matroska converti en MP4 »: its tags have no counterpart in an MP4
+- **Never expected**: a date (any tag whose name holds `Date`), GPS (`GPS` in its name) or display matrix (`MatrixStructure`) of the movie or of a track the export keeps, whatever else is declared. A track the export doesn't keep loses its dates with it, as expected.
+- **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`removed`) or changed (`changed`). In human mode, their tags are printed on stderr.
+- **`added`** (`tag`, `after`): tags that appear in the output (bit rates, the encoder's name, ffmpeg's timecode track…).
+
+On a Galaxy S23 video (HEVC, rotated or not, with GPS), the export loses nothing unexpectedly, with or without its sound (`dance`): `capture_date`, `gps`, `camera` and `rotation` stay `same`, and the expected losses are the encoding parameters (and the track IDs when the export renumbers them), and with `dance` the audio track and the movie's duration. Known limit: a MOV original also shows, as unexpected, tags of the QuickTime format an MP4 doesn't hold (`HandlerClass`, `VendorID`, an audio channel layout box, a language `Unknown (32767)` written `und`), and the `HandlerType` of a MOV track may be read on its data reference (`URL`). A Matroska or AVI date shows as an unexpected loss, though the output holds it as its creation date.
 
 ## Progress (`--json`)
 
@@ -75,7 +103,21 @@ stdout only holds one JSON document (the same clip):
     "duration_seconds": 4.0,
     "elapsed_seconds": 0.7,
     "preset": "default",
-    "crf": 32
+    "crf": 32,
+    "metadata": {
+      "important": [
+        {"key": "capture_date", "before": "2024:06:01 08:00:00+00:00", "after": "2024:06:01 08:00:00+00:00", "source": "QuickTime:CreateDate", "status": "same"},
+        {"key": "gps", "before": null, "after": null, "source": null, "status": "absent"},
+        {"key": "camera", "before": null, "after": null, "source": null, "status": "absent"},
+        {"key": "dimensions", "before": {"width": 240, "height": 320}, "after": {"width": 240, "height": 320}, "source": "Track1:ImageWidth", "status": "same"},
+        {"key": "rotation", "before": 90, "after": 90, "source": "Track1:MatrixStructure", "status": "same"}
+      ],
+      "unexpected_losses": [],
+      "expected_losses": [{"tag": "Track2:AudioFormat", "before": "mp4a", "reason": "réencodage"}],
+      "added": [{"tag": "ItemList:Encoder", "after": "Lavf63.1.102"}],
+      "before": {"QuickTime:CreateDate": "2024:06:01 08:00:00", "...": "..."},
+      "after": {"QuickTime:CreateDate": "2024:06:01 08:00:00", "...": "..."}
+    }
   }
 }
 ```
@@ -84,6 +126,7 @@ stdout only holds one JSON document (the same clip):
 - **`mtime`**: ISO 8601 in UTC; the output's is the input's.
 - **`duration_seconds`**: the video's duration (`null` when ffprobe can't read it); **`elapsed_seconds`**: the time the export took.
 - **`preset`**, **`crf`**: the preset used and the CRF it was encoded with, the preset's own or `--crf`.
+- **`metadata`**: the [metadata diff](#metadata-diff) of the original and the output.
 
 ## Writing and interruption
 
