@@ -20,8 +20,14 @@ from compression_suite.utils.pinned_tools import (
 
 # Commands relying on each external program; a pinned tool missing here is reported with no command.
 USED_BY: dict[str, tuple[str, ...]] = {
-    "exiftool": ("compress-image", "inspect"),
-    "ffmpeg": ("extract-unique-frames", "reassemble-video"),
+    "exiftool": ("compress-image", "compress-video", "inspect"),
+    "ffmpeg": ("compress-video", "display-copy", "extract-unique-frames", "preview-portion", "reassemble-video"),
+    "ffprobe": (
+        "compress-video",
+        "display-copy",
+        "extract-unique-frames",
+        "preview-portion",
+    ),  # reads the video's streams and duration
     "jpegoptim": ("reduce-jpeg-size",),
 }
 
@@ -38,7 +44,6 @@ class SystemDependency:
 
 SYSTEM_DEPENDENCIES = [
     SystemDependency("perl", ("-e", "print $^V"), r"^v?(\S+)", USED_BY["exiftool"]),  # runs the pinned exiftool
-    SystemDependency("ffmpeg", ("-version",), r"ffmpeg version (\S+)", USED_BY["ffmpeg"]),
     SystemDependency("jpegoptim", ("--version",), r"jpegoptim v(\S+)", USED_BY["jpegoptim"]),
 ]
 

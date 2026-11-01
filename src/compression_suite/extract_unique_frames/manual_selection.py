@@ -10,6 +10,7 @@ import ffmpeg
 import numpy as np
 
 from compression_suite.models.geometry import PixelRectangle
+from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.utils.video import get_video_info
 
 WINDOW_NAME = "Select ignored regions"
@@ -69,7 +70,7 @@ def _decode_video_frame(
         frame_bytes, _ = (
             ffmpeg.input(video_file, ss=timestamp)
             .output("pipe:", format="rawvideo", pix_fmt="bgr24", vframes=1)
-            .run(capture_stdout=True, capture_stderr=True)
+            .run(cmd=str(resolve_tool("ffmpeg")), capture_stdout=True, capture_stderr=True)
         )
     except ffmpeg.Error as error:
         details = error.stderr.decode(errors="replace") if error.stderr else "unknown FFmpeg error"

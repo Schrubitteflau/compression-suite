@@ -11,3 +11,7 @@ The default triage label vocabulary is used. See `docs/agents/triage-labels.md`.
 ### Domain docs
 
 This repository uses the single-context layout. See `docs/agents/domain.md`.
+
+### Delivery
+
+Standing rules for `/ship` (checks, off-limits data, branches). See `docs/agents/delivery.md`.

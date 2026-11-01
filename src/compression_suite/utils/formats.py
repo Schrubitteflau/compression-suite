@@ -47,3 +47,40 @@ def detect_file_format(path: Path) -> str:
     """Detect the format of a file from its first bytes."""
     with path.open("rb") as f:
         return detect_format(f.read(HEADER_SIZE))
+
+
+# Bytes needed to recognise the video containers below (two MPEG-TS packets, 192 bytes each in an M2TS).
+VIDEO_HEADER_SIZE = 256
+
+# Top-level boxes a QuickTime file older than the `ftyp` box may start with.
+_OLD_QUICKTIME_BOXES = {b"moov", b"mdat", b"wide", b"free", b"skip"}
+
+
+def detect_video_container(header: bytes) -> str | None:
+    """Return the container of a video file (`mp4`, `mov`, `3gp`, `matroska`, `webm`, `avi`, `mpegts`) or None.
+
+    Only the container is recognised, not what it holds: an ISO media file may hold audio only, or be an image (check
+    `detect_format` first). Kept apart from `detect_format`, so that what `inspect` reports doesn't change.
+    """
+    if header[4:8] == b"ftyp":
+        brand = header[8:12]
+        if brand == b"qt  ":
+            return "mov"
+        return "3gp" if brand.startswith(b"3g") else "mp4"
+    if header[4:8] in _OLD_QUICKTIME_BOXES:
+        return "mov"
+    if header.startswith(b"\x1a\x45\xdf\xa3"):
+        return "webm" if b"webm" in header[:64] else "matroska"
+    if header[:4] == b"RIFF" and header[8:12] == b"AVI ":
+        return "avi"
+    if header[0:1] == b"\x47" and header[188:189] == b"\x47":
+        return "mpegts"
+    if header[4:5] == b"\x47" and header[196:197] == b"\x47":  # M2TS (AVCHD): a 4-byte timestamp before each packet
+        return "mpegts"
+    return None
+
+
+def detect_file_video_container(path: Path) -> str | None:
+    """Detect the video container of a file from its first bytes."""
+    with path.open("rb") as f:
+        return detect_video_container(f.read(VIDEO_HEADER_SIZE))

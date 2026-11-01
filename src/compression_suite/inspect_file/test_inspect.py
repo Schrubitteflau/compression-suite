@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pillow_heif
 import pytest
 from click.testing import Result
 from typer.testing import CliRunner
@@ -20,6 +21,8 @@ S23_MOTION_PHOTO = SAMPLES / "s23_motion_photo.jpg"
 SAMSUNG_MOTION_PHOTO = SAMPLES / "samsung_motion_photo.jpg"
 SCREENSHOT = SAMPLES / "screenshot.png"
 ORIENTED_P3_HEIC = SAMPLES / "oriented_p3.heic"
+TILED_HEIC = SAMPLES / "tiled.heic"
+OVER_LIMIT_HEIC = SAMPLES / "over_limit.heic"
 
 EXIFTOOL_VERSION = load_manifest()["exiftool"].version
 
@@ -191,8 +194,9 @@ def test_unknown_format_is_not_corrupt(tmp_path: Path):
     }
 
 
-def test_heic_is_not_corrupt(tmp_path: Path):
-    assert _inspect(_copy(ORIENTED_P3_HEIC, tmp_path))["corrupt"] == {"detected": False, "reason": None}
+@pytest.mark.parametrize("sample", [ORIENTED_P3_HEIC, TILED_HEIC])
+def test_heic_is_not_corrupt(tmp_path: Path, sample: Path):
+    assert _inspect(_copy(sample, tmp_path))["corrupt"] == {"detected": False, "reason": None}
 
 
 # --- Corrupt files --------------------------------------------------------------
@@ -220,6 +224,47 @@ def test_truncated_file_is_described_and_flagged_corrupt(tmp_path: Path, sample:
     assert result["corrupt"]["detected"] is True
     assert decoder_message in result["corrupt"]["reason"]
     assert result["metadata"]  # exiftool still reads what it can
+
+
+@pytest.mark.parametrize("kept", [0.2, 0.5, 0.75])
+def test_heic_cut_among_its_tiles_is_flagged_corrupt(tmp_path: Path, kept: float):
+    # libheif decodes a grid with missing tiles without an error, filling them in
+    full_size = TILED_HEIC.stat().st_size
+    path = _write(tmp_path, "truncated.heic", TILED_HEIC.read_bytes()[: int(full_size * kept)])
+    result = _inspect(path)
+    assert result["format"] == "heic"
+    assert result["corrupt"] == {
+        "detected": True,
+        "reason": f"file cut short, its image data runs to byte {full_size} but the file has {path.stat().st_size}",
+    }
+
+
+def test_heic_cut_only_in_its_trailing_thumbnail_is_flagged_corrupt(tmp_path: Path):
+    data = TILED_HEIC.read_bytes()
+    cut = data[:-100]
+    # The thumbnail is stored last: the main image still decodes whole
+    assert pillow_heif.open_heif(cut).to_pillow().tobytes() == pillow_heif.open_heif(data).to_pillow().tobytes()
+    assert pillow_heif.open_heif(data).info["thumbnails"]  # and the complete file has it
+    assert _inspect(_write(tmp_path, "truncated.heic", cut))["corrupt"] == {
+        "detected": True,
+        "reason": f"file cut short, its image data runs to byte {len(data)} but the file has {len(cut)}",
+    }
+
+
+def test_heic_beyond_libheif_security_limits_is_flagged_corrupt(tmp_path: Path):
+    result = _inspect(_copy(OVER_LIMIT_HEIC, tmp_path))
+    assert result["corrupt"]["detected"] is True
+    assert "Number of extents in iloc box (33) exceeds security limit (32)" in result["corrupt"]["reason"]
+
+
+def test_libheif_out_of_memory_on_a_sound_heic_is_internal_error_not_corrupt(tmp_path: Path):
+    # Only libheif's security-limit refusal says the file is damaged; lacking memory says nothing about the file
+    with patch("pillow_heif.open_heif", side_effect=RuntimeError("Memory allocation error: Cannot allocate memory")):
+        result = _invoke(_copy(TILED_HEIC, tmp_path))
+    assert result.exit_code == 50, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "internal_error"
+    assert "Memory allocation error" in error["message"]
 
 
 def test_pdf_is_not_checked_for_corruption(tmp_path: Path):

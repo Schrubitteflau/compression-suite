@@ -4,12 +4,13 @@ Tags are keyed `Group:Name` (exiftool `-j -G1 -a`). Each tag present before is e
 (declared by the command, with its reason) or an unexpected loss (`removed` or `changed`). Tags that appear
 after are listed apart. The important fields (capture date, GPS, camera...) always come first, even when intact.
 
-The module is generic: a command passes its own expected losses. The video commands will add their important
-fields (rotation, creation date) to IMPORTANT_FIELDS.
+The module is generic: a command passes its own expected losses. The important fields here are those of an image;
+a video's, and its diff, are in utils.video_metadata, on top of `classify_losses`.
 """
 
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -148,10 +149,11 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
 
     exiftool still describes a file whose format it doesn't know or that it refuses (with an `ExifTool:Error` or
     `ExifTool:Warning`, in an ignored group): no output at all means exiftool itself failed (`internal_error`),
-    never the file. A damaged file is told by its decoder (utils.decoding), not by exiftool.
+    never the file. A damaged file is told by its decoder (utils.decoding), not by exiftool. The path is given
+    absolute: a relative name starting with a dash would otherwise be an option.
     """
     result = subprocess.run(
-        [str(exiftool), "-j", "-G1", "-a", str(path)],
+        [str(exiftool), "-j", "-G1", "-a", str(path.absolute())],
         capture_output=True,
         text=True,
         timeout=30,
@@ -207,7 +209,7 @@ def _transparency_loss(transparency: tuple[bool | None, bool | None]) -> dict[st
     return {"tag": TRANSPARENCY_TAG, "kind": kind, "before": before, "after": after}
 
 
-def _candidate_value(candidate: Candidate, tags: dict[str, Any]) -> tuple[Any, str] | None:
+def candidate_value(candidate: Candidate, tags: dict[str, Any]) -> tuple[Any, str] | None:
     """The candidate's value and source in `tags`, or None if its first tag is missing."""
     if isinstance(candidate, str):
         return (tags[candidate], candidate) if candidate in tags else None
@@ -220,7 +222,7 @@ def _candidate_value(candidate: Candidate, tags: dict[str, Any]) -> tuple[Any, s
 def _field_value(field: ImportantField, tags: dict[str, Any]) -> tuple[Any, str | None]:
     """The value of an important field and the tag it comes from, or (None, None)."""
     for candidate in field.candidates:
-        found = _candidate_value(candidate, tags)
+        found = candidate_value(candidate, tags)
         if found is None:
             continue
         value, source = found
@@ -248,7 +250,7 @@ def important_values(tags: dict[str, Any], mtime: str | None, transparency: bool
     return fields
 
 
-def _status(before: Any, after: Any) -> str:
+def field_status(before: Any, after: Any) -> str:
     """`absent` on both sides, `same`, `lost` after, or `changed` (including a value that appears)."""
     if before is None and after is None:
         return "absent"
@@ -279,7 +281,7 @@ def _important_fields(
                 "before": before_value,
                 "after": after_value,
                 "source": source,
-                "status": _status(before_value, after_value),
+                "status": field_status(before_value, after_value),
             }
         )
     fields.append(_transparency_field(transparency))
@@ -344,18 +346,10 @@ def diff_metadata(
     (`same_displayed_picture`), None when it wasn't checked. `same_colors` tells whether it displays it with the same
     colours (`same_colors`), None when it wasn't checked.
     """
-    expected, unexpected = [], []
     never_expected = _never_expected_tags(transparency, _swapped_dimension_tags(before, after))
-    for tag, value in before.items():
-        if tag in after and after[tag] == value:
-            continue
-        reason = _expected_reason(tag, expected_losses, never_expected)
-        if reason is not None:
-            expected.append({"tag": tag, "before": value, "reason": reason})
-        elif tag in after:
-            unexpected.append({"tag": tag, "kind": "changed", "before": value, "after": after[tag]})
-        else:
-            unexpected.append({"tag": tag, "kind": "removed", "before": value, "after": None})
+    unexpected, expected = classify_losses(
+        before, after, lambda tag: _expected_reason(tag, expected_losses, never_expected)
+    )
     transparency_loss = _transparency_loss(transparency)
     if transparency_loss is not None:
         unexpected.append(transparency_loss)
@@ -376,7 +370,31 @@ def diff_metadata(
         "important": _important_fields(before, after, mtimes, transparency),
         "unexpected_losses": unexpected,
         "expected_losses": expected,
-        "added": [{"tag": tag, "after": value} for tag, value in after.items() if tag not in before],
+        "added": added_tags(before, after),
         "before": before,
         "after": after,
     }
+
+
+def classify_losses(
+    before: dict[str, Any], after: dict[str, Any], reason: Callable[[str], str | None]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The unexpected and the expected losses: every tag of `before` missing or changed in `after`, expected when
+    `reason` gives the tag a reason."""
+    expected, unexpected = [], []
+    for tag, value in before.items():
+        if tag in after and after[tag] == value:
+            continue
+        tag_reason = reason(tag)
+        if tag_reason is not None:
+            expected.append({"tag": tag, "before": value, "reason": tag_reason})
+        elif tag in after:
+            unexpected.append({"tag": tag, "kind": "changed", "before": value, "after": after[tag]})
+        else:
+            unexpected.append({"tag": tag, "kind": "removed", "before": value, "after": None})
+    return unexpected, expected
+
+
+def added_tags(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    """The tags that appear in `after` only."""
+    return [{"tag": tag, "after": value} for tag, value in after.items() if tag not in before]
