@@ -57,6 +57,21 @@ uv run compression_suite --help
 
 You should see the available commands listed. `uv run compression_suite doctor` then shows the versions and paths of the tools really used, and whether the Tinify key is configured (see [doctor](docs/doctor.md)). `uv run compression_suite video-presets` lists the named video presets (see [video-presets](docs/video-presets.md)), and `compress-video` compresses a whole video with one of them (see [compress-video](docs/compress-video.md)). `uv run compression_suite display-copy VIDEO -o COPY.mp4` tells whether a browser plays a video as is, and if not writes an H.264 copy for display (see [display-copy](docs/display-copy.md)), and `preview-portion` encodes 3 s of a video at a preset's exact settings, rendered in H.264 for display (see [preview-portion](docs/preview-portion.md)). For more detailed examples, see the [Current usage examples](#current-usage-examples) section below.
 
+### The video commands' common contract
+
+`display-copy`, `preview-portion` and `compress-video` speak the same language under `--json` (contract `schema_version` 2, the version every command's JSON document carries). Version 2 changed only the fields of these three video commands: the JSON of the image commands (`compress-image`, `inspect`, `preview`) and of `doctor` and `video-presets` keeps the shape it had in version 1, so a client written for version 1 only needs to accept 2 for them.
+
+- **Same reading of the video**: the same probe (pinned ffprobe, first frame and last seconds decoded) accepts the same files, any container ffprobe reads that holds a video stream (MP4, MOV, 3GP, Matroska, WebM, AVI, MPEG-TS, FLV, Ogg, MPEG-PS...), and refuses the others with the same error code, message and `details.detected_format`: `unsupported_format` (not a video: an image, audio only, an unknown file) or `input_corrupt` (a video that can't be decoded, cut short by an interrupted sync, for instance). Only `compress-video`, which stores the result in place of the original, also refuses a video with two video streams.
+- **Same fields in `result`**, with the same values for the same video:
+  - `input`: `{path, format, size_bytes, mtime}`: the path as given, the container detected on the content (`mp4`, `mov`, `3gp`, `matroska`, `webm`, `avi`, `mpegts`, else the name of ffmpeg's demuxer: `flv`, `ogg`, `mpeg`...; the same name as `details.detected_format`), the size, and the mtime in ISO 8601 UTC;
+  - `output`: the same shape for the MP4 written (`format` is always `mp4`); `null` for a `display-copy` that needs no copy;
+  - `duration_seconds`: the video's duration, to the millisecond (`null` when the container doesn't say);
+  - `elapsed_seconds`: the time the command took;
+  - `preset`, `crf`: the preset and the CRF used (`preview-portion` and `compress-video`).
+- **Same writing**: the output is written into a file without a name, which gets the output's name only once complete. A command stopped at any point, even by SIGKILL, leaves neither a partial output nor a temporary file; without `--overwrite`, a file that appears at the output meanwhile is kept (`output_exists`).
+- **Same stopping**: SIGINT, SIGTERM and SIGHUP give the `interrupted` envelope (exit 130) from the moment the command starts its checks until the output takes its name; once it is named, the command is reported done. A signal while the process is still starting (Python loading the command, about the first 0.2 to 0.3 s) ends it by that signal (exit 128 + the signal's number, 143 for SIGTERM), with no JSON on stdout and nothing written.
+- **Same sound**: a preview portion keeps the audio streams the export keeps, each played as the export plays it, a late start included.
+
 ### Tinify API key
 
 `compress-image` uses `--api-key` if given, else `tinify_api_key` in `~/.config/compression-suite/config.toml` (`$XDG_CONFIG_HOME/compression-suite/config.toml` when that variable is set to an absolute path). An empty `--api-key` is a missing key, not a fallback on the file. No other environment variable is read, and the key never appears in any output. Without a key, the command fails with `api_key_missing` (exit code 13), naming the expected file. If the group or the others have any right on the file (read, write or execute: anything but 600 or stricter), a warning is printed on stderr: run `chmod 600` on it.

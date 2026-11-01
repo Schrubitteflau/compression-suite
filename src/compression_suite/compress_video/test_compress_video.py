@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from compression_suite.cli import app
 from compression_suite.compress_video import main
+from compression_suite.utils import ffmpeg_output
 from compression_suite.utils.pinned_tools import resolve_tool
 
 runner = CliRunner()
@@ -105,7 +106,7 @@ def _compress(source: Path, output: Path, *args: str, preset: str = "default") -
     result = _invoke(source, output, *args, preset=preset)
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert (document["schema_version"], document["ok"], document["command"]) == (1, True, "compress-video")
+    assert (document["schema_version"], document["ok"], document["command"]) == (2, True, "compress-video")
     return document["result"]
 
 
@@ -309,7 +310,7 @@ def test_progress_goes_to_stderr_as_json_lines_ending_at_100(tmp_path: Path):
     assert json.loads(result.stdout)["ok"] is True  # stdout: the envelope alone
     lines = [json.loads(line) for line in result.stderr.splitlines()]
     assert len(lines) >= 3
-    assert all((line["schema_version"], line["command"]) == (1, "compress-video") for line in lines)
+    assert all((line["schema_version"], line["command"]) == (2, "compress-video") for line in lines)
     progress = [line["progress"] for line in lines]
     assert progress[0] == {"encoded_seconds": 0.0, "duration_seconds": pytest.approx(4.0, abs=0.05), "percent": 0.0}
     assert progress[-1] == {
@@ -485,7 +486,7 @@ def test_an_interrupted_export_leaves_no_file(tmp_path: Path, signum: signal.Sig
         for line in process.stderr:  # wait until it encodes, with its temporary file
             if json.loads(line)["progress"]["percent"] > 0:
                 break
-        assert len(_files(tmp_path)) == 2  # the source and the temporary file
+        assert _files(tmp_path) == {"long.mp4"}  # it encodes into files that have no name yet
         process.send_signal(signum)
         stdout, _ = process.communicate(timeout=30)
     finally:
@@ -734,13 +735,12 @@ def test_audio_opus_can_not_hold_is_downmixed_keeping_most_channels(tmp_path: Pa
     assert (audio["codec_name"], audio["channel_layout"]) == ("opus", expected)
 
 
-def test_a_container_compress_video_does_not_read_is_named(tmp_path: Path):
+def test_a_container_outside_the_common_ones_is_exported(tmp_path: Path):
     source = tmp_path / "clip.mpg"
     _ffmpeg(*TESTSRC, "-c:v", "mpeg2video", "-f", "mpeg", str(source))
-    error = _assert_error(_invoke(source, tmp_path / "out.mp4"), "unsupported_format", 21)
-    assert error["details"] == {"detected_format": "mpeg"}
-    assert "video container mpeg not supported" in error["message"]
-    assert "mp4, mov, 3gp, matroska, webm, avi, mpegts" in error["message"]
+    output = tmp_path / "out.mp4"
+    assert _compress(source, output)["input"]["format"] == "mpeg"
+    assert _stream(output, "video")["codec_name"] == "hevc"
 
 
 def test_a_second_video_stream_is_refused(tmp_path: Path):
@@ -767,13 +767,13 @@ def _hold_unhandled(signum: signal.Signals) -> object:
 def test_a_signal_once_the_output_is_in_place_still_reports_the_export(
     phone_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signum: signal.Signals
 ):
-    put_in_place = main.put_in_place
+    name_it = ffmpeg_output._name_anonymous
 
-    def put_in_place_then_signal(*args: object) -> None:
-        put_in_place(*args)  # ty: ignore[invalid-argument-type]
-        signal.raise_signal(signum)  # received between the rename and the envelope
+    def name_then_signal(*args: object) -> None:
+        name_it(*args)  # ty: ignore[invalid-argument-type]
+        signal.raise_signal(signum)  # received between the naming and the envelope
 
-    monkeypatch.setattr(main, "put_in_place", put_in_place_then_signal)
+    monkeypatch.setattr(ffmpeg_output, "_name_anonymous", name_then_signal)
     output = tmp_path / "out.mp4"
     previous = _hold_unhandled(signum)
     try:
@@ -857,4 +857,33 @@ def test_signals_during_the_cleanup_of_an_interruption_change_nothing(tmp_path: 
         process.kill()
     assert envelope["error"]["code"] == "interrupted"
     assert process.returncode == 130
+    assert _files(tmp_path) == {"long.mp4"}
+
+
+# --- One contract with the other video commands (#25) -----------------------------
+
+
+def test_a_killed_export_leaves_nothing(tmp_path: Path):
+    source = _make_video(tmp_path / "long.mp4", size="640x480", duration=10.0, phone_metadata=False)
+    output = tmp_path / "new" / "out.mp4"
+    process = _start_export(source, output)
+    try:
+        process.send_signal(signal.SIGKILL)
+        process.wait(timeout=30)
+    finally:
+        process.kill()
+    # Nothing runs after a SIGKILL: the folder created for the output stays, empty, but no file is left in it
+    assert [path.relative_to(tmp_path).as_posix() for path in sorted(tmp_path.rglob("*"))] == ["long.mp4", "new"]
+
+
+def test_sighup_is_an_interruption(tmp_path: Path):
+    source = _make_video(tmp_path / "long.mp4", size="640x480", duration=10.0, phone_metadata=False)
+    process = _start_export(source, tmp_path / "out.mp4")
+    try:
+        process.send_signal(signal.SIGHUP)
+        stdout, _ = process.communicate(timeout=30)
+    finally:
+        process.kill()
+    assert process.returncode == 130
+    assert json.loads(stdout)["error"]["code"] == "interrupted"
     assert _files(tmp_path) == {"long.mp4"}

@@ -32,17 +32,19 @@ compression_suite compress-video clip.mp4 --preset default -o /tmp/clip.mp4 --js
 
 ## What is encoded
 
+The original is read as every video command reads it (see [the common contract](../README.md#the-video-commands-common-contract)): any container ffprobe reads, holding a video stream (MP4, MOV, 3GP, Matroska, WebM, AVI, MPEG-TS, FLV, Ogg, MPEG-PS...), its first frame and its last seconds decoded before anything is written.
+
 - The video stream: a source must hold exactly one, besides its cover arts (attached pictures, never encoded, even when one comes first). A source with two video streams is refused (`unsupported_format`).
 - Every audio stream, each encoded with the preset's audio settings (a preset without audio drops them all). Opus only takes some channel layouts: mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 and 7.1. A track in another layout is downmixed to the one keeping the most channels, with no more channels, and no more non-LFE channels, than it has: 4.0 gives quad, 2.1 stereo, hexagonal and 5.1(side) give 5.1. The chosen layout may still hold a channel the track lacks: hexagonal, which has no LFE, gives 5.1 with an LFE channel left silent. A track whose layout is unknown (PCM in a MOV) counts all its channels as non-LFE.
 - Other streams are not kept: subtitles, cover arts, data tracks (Apple's `mebx` metadata, Samsung's).
 - The video is decoded without applying its rotation: the pixels are stored as in the original, and the rotation stays in the metadata (the track's display matrix). A player shows the output the same way as the original.
 - Every frame is kept, at its own time, in the original's time base.
-- An audio track that starts after the picture (an edit list beginning with an empty edit, as a Galaxy writes its sound, a few milliseconds late) keeps its start and its length: the export plays that edit itself, ffmpeg alone would move the track's end by the length of the empty edit.
+- An audio track that starts after the picture (an edit list beginning with an empty edit, as a Galaxy writes its sound, a few milliseconds late) keeps its start and its length: the export plays that edit itself, ffmpeg alone would move the track's end by the length of the empty edit. The [preview portions](preview-portion.md) play the audio with the same code.
 - The index (`moov`) is written at the start of the file, so that a player can start before reading it all.
 
 ## Metadata
 
-ffmpeg keeps the rotation, the track languages and handler names. It writes the creation date into every QuickTime date, modification dates included, and turns a zero date into the creation date: for an MP4, MOV or 3GP original, exiftool writes back the original's dates, those of the movie (`CreateDate`, `ModifyDate`) and of each track (`TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate`, found by track ID), zero dates included. A Matroska, WebM, AVI or MPEG-TS original has no such dates: the output's come from its `creation_time`, if any. exiftool also copies back from the original what ffmpeg doesn't write in an MP4: the user data (`©xyz` GPS of Android phones, author, Samsung's play mode), the `mdta` keys (Android version, capture frame rate and time zone; Apple's location and model), the item list and the XMP. ffmpeg's own copy of the location (a 3GPP `loci` box) is not written: the output would hold a second GPS the original doesn't have. Samsung's `smta` box (the phone's model), which neither ffmpeg nor exiftool writes, is put back raw into the output's user data: the media data after the index moves by its size, and every chunk offset with it. When it can't be (an output close to 4 GiB, whose 32-bit chunk offsets would overflow), the output is kept without it, and the model is an expected loss.
+ffmpeg keeps the rotation, the track languages and handler names. It writes the creation date into every QuickTime date, modification dates included, and turns a zero date into the creation date: for an MP4, MOV or 3GP original, exiftool writes back the original's dates, those of the movie (`CreateDate`, `ModifyDate`) and of each track (`TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate`, found by track ID), zero dates included. An original in another container (Matroska, WebM, AVI, MPEG-TS...) has no such dates: the output's come from its `creation_time`, if any. exiftool also copies back from the original what ffmpeg doesn't write in an MP4: the user data (`©xyz` GPS of Android phones, author, Samsung's play mode), the `mdta` keys (Android version, capture frame rate and time zone; Apple's location and model), the item list and the XMP. ffmpeg's own copy of the location (a 3GPP `loci` box) is not written: the output would hold a second GPS the original doesn't have. Samsung's `smta` box (the phone's model), which neither ffmpeg nor exiftool writes, is put back raw into the output's user data: the media data after the index moves by its size, and every chunk offset with it. When it can't be (an output close to 4 GiB, whose 32-bit chunk offsets would overflow), the output is kept without it, and the model is an expected loss.
 
 Some fields change by nature (brands, sizes, bitrates, encoder name, track IDs). The [metadata diff](#metadata-diff) lists them all.
 
@@ -66,7 +68,7 @@ Some fields change by nature (brands, sizes, bitrates, encoder name, track IDs).
   - the channel count of an audio track downmixed for Opus (see [What is encoded](#what-is-encoded)), with the layouts: « Opus ne prend pas la disposition 2.1 : piste mixée en stereo »
   - an odd stored width or height cropped by one, « largeur ou hauteur impaire : dernière colonne ou ligne retirée (x265 en 4:2:0) »
   - only when its box can't be put back (see [Metadata](#metadata)), Samsung's model (`Samsung:SamsungModel`), « boîte Samsung « smta » : ne peut être remise, la vidéo dépasserait les 4 Go qu'adressent ses index »: `camera` is then `lost`. Any other Samsung tag lost (the `sefd` box of a slow-motion clip, after the media data) is unexpected
-  - for a Matroska, WebM, AVI or MPEG-TS original, every other loss, « conteneur matroska converti en MP4 »: its tags have no counterpart in an MP4
+  - for an original in another container than MP4, MOV or 3GP (Matroska, WebM, AVI, MPEG-TS...), every other loss, « conteneur matroska converti en MP4 »: its tags have no counterpart in an MP4
 - **Never expected**: a date (any tag whose name holds `Date`), GPS (`GPS` in its name) or display matrix (`MatrixStructure`) of the movie or of a track the export keeps, whatever else is declared. A track the export doesn't keep loses its dates with it, as expected.
 - **`unexpected_losses`** (`tag`, `kind`, `before`, `after`): any other tag that disappeared (`removed`) or changed (`changed`). In human mode, their tags are printed on stderr.
 - **`added`** (`tag`, `after`): tags that appear in the output (bit rates, the encoder's name, ffmpeg's timecode track…).
@@ -78,9 +80,9 @@ On a Galaxy S23 video (HEVC, rotated or not, with GPS), the export loses nothing
 With `--json`, the progress is written on stderr, one JSON object per line, about every half second while encoding (here, a fabricated 4-second 320×240 clip, encoded in less than a second):
 
 ```json
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 0.0, "duration_seconds": 4.0, "percent": 0.0}}
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 99.9}}
-{"schema_version": 1, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 100.0}}
+{"schema_version": 2, "command": "compress-video", "progress": {"encoded_seconds": 0.0, "duration_seconds": 4.0, "percent": 0.0}}
+{"schema_version": 2, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 99.9}}
+{"schema_version": 2, "command": "compress-video", "progress": {"encoded_seconds": 4.0, "duration_seconds": 4.0, "percent": 100.0}}
 ```
 
 - **`encoded_seconds`**: the seconds of video encoded so far; **`duration_seconds`**: the video's duration.
@@ -94,7 +96,7 @@ stdout only holds one JSON document (the same clip):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "compress-video",
   "result": {
@@ -122,7 +124,9 @@ stdout only holds one JSON document (the same clip):
 }
 ```
 
-- **`format`**: the container, detected on the content: `mp4`, `mov`, `3gp`, `matroska`, `webm`, `avi` or `mpegts` for the input; always `mp4` for the output.
+`input`, `output`, `duration_seconds`, `elapsed_seconds`, `preset` and `crf` are the fields every video command gives, with the same values for the same video (see [the common contract](../README.md#the-video-commands-common-contract)).
+
+- **`format`**: the container, detected on the content: `mp4`, `mov`, `3gp`, `matroska`, `webm`, `avi`, `mpegts`, else the name of ffmpeg's demuxer (`flv`, `ogg`, `mpeg`...) for the input, as `details.detected_format` names it; always `mp4` for the output.
 - **`mtime`**: ISO 8601 in UTC; the output's is the input's.
 - **`duration_seconds`**: the video's duration (`null` when ffprobe can't read it); **`elapsed_seconds`**: the time the export took.
 - **`preset`**, **`crf`**: the preset used and the CRF it was encoded with, the preset's own or `--crf`.
@@ -130,32 +134,31 @@ stdout only holds one JSON document (the same clip):
 
 ## Writing and interruption
 
-The output is written atomically: ffmpeg writes a temporary file next to it (`.<name>.<random>.tmp`), exiftool rewrites it, it gets the original's dates (atime and mtime), then it takes the output's name. A reader never sees a half-written output. Without `--overwrite`, a file that appeared at the output during the export is kept: the export fails with `output_exists` (the name is given by a hard link, which can't replace a file; on a filesystem without hard links, the output is checked again just before the rename).
+The output is written as every video command writes it (see [display-copy](display-copy.md#atomic-writing)): ffmpeg encodes into an anonymous file (`O_TMPFILE`) of the output's folder, exiftool writes it again with the metadata into a second one, which gets the original's dates (atime and mtime), then the output's name. Until then neither file has a name: a reader never sees a half-written output, and an export stopped at any point, even by SIGKILL (`kill -9`, the OOM killer), leaves neither a partial output nor a temporary file. Both files take room in the output's folder at once: about twice the output's size, until the export ends. Without `--overwrite`, a file that appeared at the output during the export is kept: the export fails with `output_exists` (the name is given by a hard link, which can't replace a file). On a file system without `O_TMPFILE`, a hidden named temporary file (`.<random>.tmp`) stands for the output's, removed on any error or signal it can catch, but left behind by a SIGKILL.
 
-An export that fails, or is stopped by SIGTERM or SIGINT (Ctrl+C) at any point before the output takes its name, kills ffmpeg or exiftool, removes the temporary file and the output's folders it created (if still empty), and exits with `interrupted` (130) for a signal. Only the first signal interrupts: the next ones are ignored, so that the cleanup runs to the end. From the moment the output takes its name until the process exits, both signals are ignored: the export is done and reported as such (exit 0), never `interrupted` with a complete output on disk. Once the JSON document is written, a signal never changes the exit code it announces (0, 130 or the error's code). A SIGKILL is the exception, see [Known limits](#known-limits).
+An export that fails, or is stopped by SIGTERM, SIGINT (Ctrl+C) or SIGHUP from the moment it starts its checks until the output takes its name, kills ffmpeg or exiftool, removes the output's folders it created (if still empty), and exits with `interrupted` (130) for a signal. A SIGHUP already ignored (`nohup`) stays ignored. Only the first signal interrupts: the next ones are ignored, so that the cleanup runs to the end. From the moment the output takes its name until the process exits, the signals are ignored: the export is done and reported as such (exit 0), never `interrupted` with a complete output on disk. Once the JSON document is written, a signal never changes the exit code it announces (0, 130 or the error's code). ffmpeg stops with compression-suite, even after a SIGKILL; the output's folders it created then stay, empty. A signal while the process is still starting (Python loading the command, about the first 0.2 to 0.3 s) ends it by that signal (exit 128 + the signal's number, 143 for SIGTERM), with no JSON on stdout and nothing written.
 
-Paths are given to ffmpeg and ffprobe as absolute `file:` paths: a file named `2024-06-01T10:30:00.mp4` is a file, not a protocol.
+Paths are given to ffmpeg and ffprobe with the `file:` protocol: a file named `2024-06-01T10:30:00.mp4` is a file, not a protocol.
 
 ## Errors
 
-Every check that can fail without encoding runs first, in this order: preset and CRF, pinned tools, input, format, output.
+Every check that can fail without encoding runs first, in this order: preset and CRF, pinned tools, input, output being the input, format, output. The errors of the original (`unsupported_format`, `input_corrupt`) have the same message and details as in `display-copy` and `preview-portion`.
 
 | Code | Exit | When |
 |---|---|---|
 | `usage_error` | 2 | invalid options, unknown preset (`details.preset`, `known_presets`), CRF out of bounds (`details.crf`, `crf_min`, `crf_max`), output that is the input itself or ends with a slash |
-| `unsupported_format` | 21 | the reason in `message`, `details.detected_format`: an image (`jpeg`...); a video in a container other than those above (`video container mpeg not supported (supported containers: …)`, `detected_format` the container ffprobe names); not a video at all (`unknown`); a supported container without a video stream (audio only) or with more than one (`holds 2 video streams, only one is supported`) |
+| `unsupported_format` | 21 | the reason in `message`, `details.detected_format`: an image (`jpeg`...); not a video at all (`unknown`); a container without a video stream (audio only, `detected_format` the container); a video with more than one video stream (`holds 2 video streams, only one is supported`): the export would lose the others |
 | `input_not_found` | 23 | input missing, or not a file |
 | `output_exists` | 24 | output exists without `--overwrite` (before the export, or appeared during it), is a symbolic link to a missing file without `--overwrite`, or is a folder |
 | `metadata_copy_failed` | 25 | exiftool failed to copy the metadata back |
 | `input_unreadable` | 26 | input present but unreadable |
-| `input_corrupt` | 27 | a video ffprobe can't open (a phone video cut before its index) or ffmpeg can't decode to the end (frames missing, damaged data, a Matroska or WebM file whose end is gone): `details.detected_format`, ffmpeg's last messages in `message`, nothing written |
+| `input_corrupt` | 27 | a video that can't be decoded: as the display copy probes it (cut before its index, first frame or end missing: a phone video cut short, a Matroska or WebM file whose end is gone), or any error of the original's demuxer or decoders met while encoding (damaged data in the middle): `details.detected_format`, the reason in `message`, nothing written |
 | `tool_missing` | 30 | pinned ffmpeg, ffprobe or exiftool not installed, not runnable, or of another version than the manifest's |
-| `internal_error` | 50 | ffmpeg failed on a video it decodes to the end (`message` gives its last messages), or any other error |
-| `interrupted` | 130 | stopped by SIGINT (Ctrl+C) or SIGTERM before the output took its name |
+| `internal_error` | 50 | ffmpeg failed without an error of the original's demuxer or decoders (`message` gives its last messages: disk full, for instance), or any other error |
+| `interrupted` | 130 | stopped by SIGINT (Ctrl+C), SIGTERM or SIGHUP from the start of the checks until the output took its name |
 
-A damaged video is told from a failure of the encoder by decoding it alone once the encoding has failed, or reported an error without failing: ffmpeg stops at the first decoding error (`-xerror`) rather than encode a video cut short, and any error it reports while decoding counts (a truncated Matroska only gives "File ended prematurely"). This decoding check, run on 48 real phone videos (S23 camera and WhatsApp, read-only copies), flagged none of them.
+A damaged video is told from a failure of the encoder by ffmpeg's error output: ffmpeg stops at the first decoding error (`-xerror`) rather than encode a video cut short, and any line of its error output that comes from the original's demuxer, streams or decoders makes it damaged, even when ffmpeg succeeds, as in the display copy and the preview portions.
 
 ## Known limits
 
 - **A truncated MPEG-TS may pass**: MPEG-TS has no index and declares no duration. A file cut in the middle of a packet is `input_corrupt`, but one cut exactly between the packets of each stream is a shorter, valid stream: it exports as a shorter video.
-- **SIGKILL leaves the temporary file**: a process killed by SIGKILL (`kill -9`, the OOM killer, a power cut) can't clean up. The temporary file `.<name>.<random>.tmp`, and possibly exiftool's `.<name>.<random>.tmp_exiftool_tmp`, stays next to the output, along with any folder created for it. The output itself is never left half-written: it only gets its name once complete. No later export removes these files: delete them by hand. Stop an export with SIGTERM or SIGINT, never SIGKILL.

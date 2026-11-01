@@ -183,7 +183,7 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "compress-image",
   "result": {
@@ -200,7 +200,7 @@ With `--json`, stdout only contains one JSON document (`schema_version` is bumpe
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": false,
   "command": "compress-image",
   "error": {

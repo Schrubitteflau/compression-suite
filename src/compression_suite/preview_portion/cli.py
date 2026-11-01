@@ -5,11 +5,11 @@ from typing import Any
 
 import typer
 
-from compression_suite.compress_video.main import Interruptions
 from compression_suite.preview_portion.main import DEFAULT_DURATION
 from compression_suite.preview_portion.main import preview_portion as encode_portion
 from compression_suite.utils.cli import stderr_console
 from compression_suite.utils.contract import run_command
+from compression_suite.utils.interruptions import Interruptions
 
 
 def preview_portion(
@@ -32,16 +32,16 @@ def preview_portion(
 
     def body() -> dict[str, Any]:
         """Encode the portion and return the `result` object of the JSON contract."""
-        result = encode_portion(input_file, output, preset, crf, start, duration, overwrite)
-        encoded = result["encoded"]
+        result = encode_portion(input_file, output, preset, crf, start, duration, overwrite, interruptions.hold)
+        encoded, portion = result["encoded"], result["portion"]
         stderr_console.print(
-            f"[bold green]Preview portion:[/bold green] {result['output']} "
-            f"({result['start_seconds']:.3f} s + {result['duration_seconds']:.3f} s, preset {result['preset']}, "
+            f"[bold green]Preview portion:[/bold green] {result['output']['path']} "
+            f"({portion['start_seconds']:.3f} s + {portion['duration_seconds']:.3f} s, preset {result['preset']}, "
             f"CRF {result['crf']}: {encoded['size_bytes']:,} bytes, {encoded['bitrate_kbps']} kb/s, "
             f"in {result['elapsed_seconds']:.1f} s)",
             highlight=False,
         )
         return result
 
-    with interruptions:  # SIGINT and SIGTERM, from the first check to the envelope
+    with interruptions:  # SIGINT, SIGTERM and SIGHUP, from the first check to the envelope
         run_command("preview-portion", json_mode, body)

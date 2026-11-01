@@ -24,7 +24,7 @@ compression_suite doctor --json
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "command": "doctor",
   "result": {
@@ -77,7 +77,7 @@ When a pinned tool is not `ok`, the document is a failure: `error.code` is `tool
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": false,
   "command": "doctor",
   "error": {

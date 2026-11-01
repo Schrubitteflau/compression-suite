@@ -9,12 +9,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from click.testing import Result
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.display_copy import main as display_copy_main
 from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.video_samples import BLUE, GREEN, H264, HDR_PQ, HEVC_ROTATED, RED
 
@@ -22,6 +24,7 @@ runner = CliRunner()
 
 # 2022-08-09T10:11:12.654321Z, in nanoseconds
 MTIME_NS = 1_660_039_872_654_321_000
+MTIME_ISO = "2022-08-09T10:11:12.654321+00:00"
 
 
 def _copy(src: Path, tmp_path: Path, name: str | None = None) -> Path:
@@ -46,7 +49,7 @@ def _display_copy(path: Path, output: Path, *args: str) -> dict:
     result = _invoke(path, output, *args)
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["ok"] is True
     assert document["command"] == "display-copy"
     return document["result"]
@@ -81,11 +84,13 @@ def test_playable_h264_needs_no_copy(tmp_path):
     video = _copy(H264, tmp_path)
     output = tmp_path / "out" / "copy.mp4"
     result = _display_copy(video, output)
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {
-        "input": str(video),
+        "input": {"path": str(video), "format": "mp4", "size_bytes": H264.stat().st_size, "mtime": MTIME_ISO},
+        "output": None,
+        "duration_seconds": pytest.approx(1.0, abs=0.05),
         "copy_needed": False,
         "copy_reasons": [],
-        "duration": pytest.approx(1.0, abs=0.05),
         "width": 128,
         "height": 72,
         "fps": 30.0,
@@ -122,12 +127,15 @@ def test_hevc_is_copied_to_h264_upright_with_audio(tmp_path):
 
     result = _display_copy(video, output)
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
+    written = output.stat()
+    assert result["output"]["mtime"].endswith("+00:00")  # the copy's own, in UTC
     assert result == {
-        "input": str(video),
+        "input": {"path": str(video), "format": "mp4", "size_bytes": len(before), "mtime": MTIME_ISO},
+        "output": {"path": str(output), "format": "mp4", "size_bytes": written.st_size, "mtime": mock.ANY},
+        "duration_seconds": pytest.approx(1.0, abs=0.05),
         "copy_needed": True,
         "copy_reasons": ["video codec hevc"],
-        "output": str(output),
-        "duration": pytest.approx(1.0, abs=0.05),
         "width": 72,  # displayed as a portrait
         "height": 128,
         "fps": 30.0,
@@ -286,7 +294,7 @@ def test_existing_output_is_kept_without_overwrite(tmp_path):
     assert output.read_bytes() == b"previous"
 
     result = _display_copy(video, output, "--overwrite")
-    assert result["output"] == str(output)
+    assert result["output"]["path"] == str(output)
     assert _stream(output, "video")["codec_name"] == "h264"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["copy.mp4", "hevc_rotated.mp4"]
 
@@ -439,7 +447,7 @@ def test_transport_streams_are_copied(tmp_path, transport_streams, kind):
     output = tmp_path / "copy.mp4"
     result = _display_copy(video, output)
     assert (result["copy_needed"], result["copy_reasons"]) == (True, ["container mpegts"])
-    assert result["duration"] == pytest.approx(4.0, abs=0.1)
+    assert result["duration_seconds"] == pytest.approx(4.0, abs=0.1)
     assert _stream(output, "video")["nb_read_frames"] == "100"
 
 
@@ -534,7 +542,7 @@ def test_output_name_of_255_bytes_is_written(tmp_path):
     video = _copy(HEVC_ROTATED, tmp_path)
     output = tmp_path / ("é" * 125 + ".mp4")  # 254 bytes
     assert len(output.name.encode()) == 254
-    assert _display_copy(video, output)["output"] == str(output)
+    assert _display_copy(video, output)["output"]["path"] == str(output)
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([video.name, output.name])
 
 
@@ -769,3 +777,60 @@ def test_matroska_duration_tag_that_doesnt_parse_is_ignored(tmp_path, duration):
     assert _stream(video, "video")["tags"]["DURATION"].strip() == duration.decode().strip()
     result = _display_copy(video, tmp_path / "copy.mp4")
     assert result["copy_reasons"] == ["container matroska,webm"]
+
+
+# --- One contract with the other video commands (#25) -----------------------------
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP], ids=lambda sig: sig.name)
+def test_a_signal_while_the_video_is_probed_is_an_interruption(tmp_path, monkeypatch, sig):
+    probe = display_copy_main.probe_video
+
+    def probe_then_signal(*args):
+        signal.raise_signal(sig)  # received while the video is probed, before any copy
+        return probe(*args)
+
+    def unhandled(received, frame):
+        raise AssertionError(f"{signal.Signals(received).name} not handled by display-copy")  # not kill pytest
+
+    monkeypatch.setattr(display_copy_main, "probe_video", probe_then_signal)
+    previous = signal.signal(sig, unhandled)
+    try:
+        result = _invoke(_copy(HEVC_ROTATED, tmp_path), tmp_path / "new" / "copy.mp4")
+    finally:
+        signal.signal(sig, previous)
+    _assert_error(result, "interrupted", 130)
+    assert [path.name for path in tmp_path.iterdir()] == ["hevc_rotated.mp4"]
+
+
+def test_a_file_appearing_at_the_output_during_the_copy_is_kept(tmp_path, monkeypatch):
+    output = tmp_path / "copy.mp4"
+    write = display_copy_main.write_with_ffmpeg
+
+    def write_meanwhile(output_path, build_args, *args, **kwargs):
+        def build_and_write(path):
+            output.write_bytes(b"written meanwhile")
+            return build_args(path)
+
+        write(output_path, build_and_write, *args, **kwargs)
+
+    monkeypatch.setattr(display_copy_main, "write_with_ffmpeg", write_meanwhile)
+    _assert_error(_invoke(_copy(HEVC_ROTATED, tmp_path), output), "output_exists", 24)
+    assert output.read_bytes() == b"written meanwhile"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["copy.mp4", "hevc_rotated.mp4"]
+
+
+def test_an_output_ending_with_a_slash_is_a_usage_error(tmp_path):
+    video = _copy(HEVC_ROTATED, tmp_path)
+    result = runner.invoke(app, ["display-copy", str(video), "-o", f"{tmp_path / 'newdir'}/", "--json"])
+    _assert_error(result, "usage_error", 2)
+    assert [path.name for path in tmp_path.iterdir()] == ["hevc_rotated.mp4"]
+
+
+def test_a_dangling_symlink_at_the_output_is_kept(tmp_path):
+    output = tmp_path / "copy.mp4"
+    output.symlink_to(tmp_path / "nowhere.mp4")
+    error = _assert_error(_invoke(_copy(HEVC_ROTATED, tmp_path), output), "output_exists", 24)
+    assert "symbolic link" in error["message"]
+    assert output.is_symlink()
+    assert not (tmp_path / "nowhere.mp4").exists()

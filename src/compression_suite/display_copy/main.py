@@ -4,14 +4,23 @@ The original is only read, never modified. It is served as is when a browser pla
 rule. Otherwise the copy is written atomically by `write_display_copy`.
 """
 
-import os
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from compression_suite.compress_image.main import check_output, validate_input_file
-from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.compress_image.main import validate_input_file
 from compression_suite.utils.display_video import display_video_args
 from compression_suite.utils.ffmpeg_output import write_with_ffmpeg
+from compression_suite.utils.interruptions import never_held
+from compression_suite.utils.video_command import (
+    check_not_the_input,
+    check_video_output,
+    duration_field,
+    elapsed_field,
+    file_field,
+    output_field,
+)
 from compression_suite.utils.video_probe import VideoProbe, ffmpeg_input, probe_video
 
 # The rule, deliberately narrow: in doubt, a copy is made.
@@ -103,38 +112,46 @@ def decoders(probe: VideoProbe) -> tuple[str, ...]:
     return tuple(name for name in names if name)
 
 
-def write_display_copy(input_path: Path, probe: VideoProbe, output_path: Path) -> None:
+def write_display_copy(
+    input_path: Path, probe: VideoProbe, output_path: Path, overwrite: bool, hold: Callable[[], None]
+) -> None:
     """Write the display copy of a probed video, atomically."""
-    write_with_ffmpeg(output_path, lambda output: display_copy_args(input_path, probe, output), decoders(probe))
+    write_with_ffmpeg(
+        output_path,
+        lambda output: display_copy_args(input_path, probe, output),
+        overwrite,
+        hold,
+        decoders(probe),
+        detected_format=probe.container,
+    )
 
 
-def check_not_the_input(input_path: Path, output_path: Path) -> None:
-    """Refuse an output that is the input itself: same path, hard link or symbolic link (`usage_error`)."""
-    if output_path.exists() and os.path.samefile(input_path, output_path):
-        raise CommandError(ErrorCode.USAGE_ERROR, f"The output is the input file: {output_path}")
+def display_copy(
+    input_file: str, output: str, overwrite: bool, hold: Callable[[], None] = never_held
+) -> dict[str, Any]:
+    """Write the display copy of a video if a browser can't play it, and return the `result` of the JSON contract.
 
-
-def display_copy(input_file: str, output: str, overwrite: bool) -> dict[str, Any]:
-    """Write the display copy of a video if a browser can't play it, and return the `result` of the JSON contract."""
+    `hold` is called right before the copy takes its name (see `utils.interruptions`).
+    """
+    started = time.monotonic()
     input_path = validate_input_file(input_file)
+    input_stat = input_path.stat()
     check_not_the_input(input_path, Path(output))
     probe = probe_video(input_path)
     reasons = copy_reasons(probe)
     width, height = probe.displayed_size
-    result: dict[str, Any] = {
-        "input": input_file,
+    if reasons:
+        write_display_copy(input_path, probe, check_video_output(output, overwrite), overwrite, hold)
+    return {
+        "input": file_field(input_file, probe.container, input_stat),
+        "output": output_field(output) if reasons else None,
+        "duration_seconds": duration_field(probe),
+        "elapsed_seconds": elapsed_field(started),
         "copy_needed": bool(reasons),
         "copy_reasons": reasons,
-        "duration": probe.duration,
         "width": width,
         "height": height,
         "fps": probe.fps,
         "video_codec": probe.video.get("codec_name"),
         "audio_codec": probe.audio.get("codec_name") if probe.audio else None,
     }
-    if reasons:
-        output_path = Path(output)
-        check_output(output_path, overwrite)
-        write_display_copy(input_path, probe, output_path)
-        result["output"] = output
-    return result

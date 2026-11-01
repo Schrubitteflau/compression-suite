@@ -206,9 +206,9 @@ def test_a_lost_creation_date_gps_or_rotation_is_never_expected(
 ):
     copy_metadata = main.copy_metadata
 
-    def damaging_copy(exiftool: Path, path: Path, destination: Path, dates: list[str]) -> None:
-        copy_metadata(exiftool, path, destination, dates)
-        _exiftool(destination, "-UserData:GPSCoordinates=", "-QuickTime:CreateDate=2000:01:01 00:00:00", "-Rotation=0")
+    def damaging_copy(exiftool: Path, path: Path, encoded: Path, destination: int, dates: list[str]) -> None:
+        damage = ["-UserData:GPSCoordinates=", "-QuickTime:CreateDate=2000:01:01 00:00:00", "-Rotation=0"]
+        copy_metadata(exiftool, path, encoded, destination, [*dates, *damage])
 
     monkeypatch.setattr(main, "copy_metadata", damaging_copy)
     monkeypatch.setattr(main, "export_expected_losses", lambda *args: [ExpectedLoss("*", "tout est attendu")])
@@ -427,9 +427,8 @@ def test_without_json_unexpected_losses_are_named_on_stderr(
 ):
     copy_metadata = main.copy_metadata
 
-    def gps_lost(exiftool: Path, path: Path, destination: Path, dates: list[str]) -> None:
-        copy_metadata(exiftool, path, destination, dates)
-        _exiftool(destination, "-UserData:GPSCoordinates=")
+    def gps_lost(exiftool: Path, path: Path, encoded: Path, destination: int, dates: list[str]) -> None:
+        copy_metadata(exiftool, path, encoded, destination, [*dates, "-UserData:GPSCoordinates="])
 
     monkeypatch.setattr(main, "copy_metadata", gps_lost)
     output = tmp_path / "out.mp4"

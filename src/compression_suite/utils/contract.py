@@ -2,12 +2,16 @@
 
 Every command that supports ``--json`` writes a single document on stdout:
 
-- success: ``{"schema_version": 1, "ok": true, "command": "<name>", "result": {...}}``
-- failure: ``{"schema_version": 1, "ok": false, "command": "<name>",
+- success: ``{"schema_version": 2, "ok": true, "command": "<name>", "result": {...}}``
+- failure: ``{"schema_version": 2, "ok": false, "command": "<name>",
   "error": {"code": "<code>", "message": "<text>", "details": {...}}}``
 
 Exit codes are the same with or without ``--json``. Any incompatible change to the
-document shape must bump ``SCHEMA_VERSION``.
+document shape must bump ``SCHEMA_VERSION``, one version for the whole CLI.
+
+Version 2 changed only the ``result`` of the video commands (display-copy, preview-portion, compress-video: common
+``input``, ``output``, ``duration_seconds``, ``elapsed_seconds`` fields); every other command's document keeps its
+version 1 shape, so a client written for version 1 only needs to accept 2 for those.
 """
 
 import json
@@ -21,7 +25,7 @@ from typer.core import TyperCommand
 
 from compression_suite.utils.cli import stderr_console
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ErrorCode(str, Enum):

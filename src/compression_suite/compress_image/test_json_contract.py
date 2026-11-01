@@ -64,7 +64,7 @@ def _json(result) -> dict:
 def _assert_error(result, code: str, exit_code: int) -> dict:
     assert result.exit_code == exit_code, result.output
     doc = _json(result)
-    assert doc["schema_version"] == 1
+    assert doc["schema_version"] == 2
     assert doc["ok"] is False
     assert doc["command"] == "compress-image"
     assert "result" not in doc
@@ -91,7 +91,7 @@ def test_success_envelope_and_result(tmp_path: Path):
 
     assert result.exit_code == 0, result.output
     doc = _json(result)
-    assert doc["schema_version"] == 1
+    assert doc["schema_version"] == 2
     assert doc["ok"] is True
     assert doc["command"] == "compress-image"
     assert "error" not in doc

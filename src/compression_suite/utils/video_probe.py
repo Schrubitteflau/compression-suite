@@ -4,12 +4,15 @@ Shared by the video commands: they all start from `probe_video`, which raises th
 
 - `unsupported_format`: an image (detected on the content: a HEIC opens in ffmpeg's MP4 demuxer), a file ffprobe
   doesn't recognise and whose first bytes are not those of a video container, a file without a video stream (audio
-  only, cover art only), or a format ffmpeg reads as images (`image2`, `*_pipe`).
+  only, cover art only), or a format ffmpeg reads as images or text (`image2`, `*_pipe`, `tty`).
 - `input_corrupt`: a file whose first bytes are those of a video container but ffprobe can't open, a container
   holding no stream at all (an MP4 cut before its `moov` box, which a phone writes last), a video whose first frame
   can't be decoded, or whose decoded frames stop short of the end its container announces (an MP4 cut in its data,
   its index first). Only the first frame and the last seconds are decoded, so that a long video is probed in a
   moment: damage in the middle is only met by a command that decodes everything.
+
+Both carry `details.detected_format`: the image format (`jpeg`, `heic`...), else the video container, named as
+`VideoProbe.container` names it, else `unknown`. Any container ffprobe reads is accepted, if it holds a video stream.
 
 Every path handed to ffmpeg or ffprobe goes through `ffmpeg_input`: a file named `concat:x.mov` is that file, never
 ffmpeg's `concat` protocol reading `x.mov`.
@@ -24,11 +27,11 @@ from pathlib import Path
 from typing import Any
 
 from compression_suite.utils.contract import CommandError, ErrorCode
-from compression_suite.utils.formats import HEADER_SIZE, UNKNOWN_FORMAT, detect_format
+from compression_suite.utils.formats import HEADER_SIZE, UNKNOWN_FORMAT, detect_format, detect_video_container
 from compression_suite.utils.pinned_tools import resolve_tool
 
-# ffmpeg demuxers that read images, not videos
-IMAGE_DEMUXERS = ("image2",)
+# ffmpeg demuxers that read images or text, not videos
+IMAGE_DEMUXERS = ("image2", "tty", "lavfi")
 IMAGE_DEMUXER_SUFFIX = "_pipe"
 
 # Bytes read to recognise a video container: three MPEG-TS packets
@@ -44,6 +47,8 @@ DEFAULT_FRAME_DURATION = 1 / 30
 # Matroska's `DURATION` tag, `HH:MM:SS.nnnnnnnnn`; any other form is ignored, as if absent
 MATROSKA_DURATION = re.compile(r"(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 
+QUICKTIME_CONTAINERS = ("mp4", "mov", "3gp")
+
 # Transfer characteristics of HDR video: PQ (HDR10, HDR10+, Dolby Vision) and HLG
 HDR_TRANSFERS = ("smpte2084", "arib-std-b67")
 
@@ -52,11 +57,24 @@ HDR_TRANSFERS = ("smpte2084", "arib-std-b67")
 class VideoProbe:
     """What the video commands need to know about a video file."""
 
+    container: str  # `mp4`, `mov`, `3gp`, `matroska`, `webm`, `avi`, `mpegts`, else ffprobe's first demuxer name
     format_name: str  # ffprobe's demuxer list, `mov,mp4,m4a,3gp,3g2,mj2` for MP4 and MOV
     major_brand: str | None  # ISO BMFF brand (`isom`, `mp42`, `qt  `...), None outside MP4 and MOV
-    duration: float  # seconds
-    video: dict[str, Any]  # ffprobe's first video stream
-    audio: dict[str, Any] | None  # ffprobe's first audio stream, None without audio
+    duration: float | None  # seconds, None when the container doesn't say (a Matroska written to a pipe)
+    video: dict[str, Any]  # ffprobe's first video stream, never a cover art
+    video_count: int  # video streams, cover arts excepted
+    audio_streams: tuple[dict[str, Any], ...]  # ffprobe's audio streams, in order
+    track_ids: dict[int, int]  # stream index to QuickTime track ID (`tkhd`), for MP4, MOV and 3GP
+
+    @property
+    def audio(self) -> dict[str, Any] | None:
+        """ffprobe's first audio stream, None without audio."""
+        return self.audio_streams[0] if self.audio_streams else None
+
+    @property
+    def is_quicktime(self) -> bool:
+        """Whether the container is a QuickTime one (MP4, MOV, 3GP): edit lists, QuickTime dates, user data."""
+        return self.container in QUICKTIME_CONTAINERS
 
     @property
     def hdr_transfer(self) -> str | None:
@@ -119,7 +137,8 @@ def _last_lines(text: str, count: int = 3) -> str:
     return " / ".join(line.strip() for line in text.strip().splitlines()[-count:])
 
 
-def _corrupt(detected_format: str, reason: str) -> CommandError:
+def corrupt_error(detected_format: str, reason: str) -> CommandError:
+    """The `input_corrupt` error of a video that can't be decoded, with the reason, as every video command gives it."""
     return CommandError(
         ErrorCode.INPUT_CORRUPT,
         f"The video can't be decoded, the file is damaged: {reason}",
@@ -127,7 +146,8 @@ def _corrupt(detected_format: str, reason: str) -> CommandError:
     )
 
 
-def _unsupported(detected_format: str, reason: str) -> CommandError:
+def unsupported_error(detected_format: str, reason: str) -> CommandError:
+    """The `unsupported_format` error of a file that is not a video, as every video command gives it."""
     return CommandError(ErrorCode.UNSUPPORTED_FORMAT, f"Not a video: {reason}", {"detected_format": detected_format})
 
 
@@ -186,7 +206,7 @@ def _check_end(ffmpeg: Path, path: Path, probe: "VideoProbe", container_start: f
     """
     video = probe.video
     expected_end = _announced_end(video, container_start)
-    end_of_window = expected_end if expected_end is not None else container_start + probe.duration
+    end_of_window = expected_end if expected_end is not None else container_start + (probe.duration or 0.0)
     window_start = end_of_window - container_start - END_CHECK_WINDOW  # ffmpeg's -ss counts from the container start
     count, end, failure = 0, None, ""
     if window_start > 0:
@@ -216,7 +236,8 @@ def probe_video(path: Path) -> VideoProbe:
         header = f.read(CONTAINER_HEADER_SIZE)
     image_format = detect_format(header[:HEADER_SIZE])
     if image_format != UNKNOWN_FORMAT:
-        raise _unsupported(image_format, f"the file is an image ({image_format})")
+        raise unsupported_error(image_format, f"the file is an image ({image_format})")
+    header_container = detect_video_container(header)
 
     ffprobe = resolve_tool("ffprobe")
     ffmpeg = resolve_tool("ffmpeg")
@@ -224,33 +245,48 @@ def probe_video(path: Path) -> VideoProbe:
     if completed.returncode != 0:
         reason = _last_lines(completed.stderr) or f"ffprobe exited with code {completed.returncode}"
         if looks_like_video_container(header):
-            raise _corrupt(UNKNOWN_FORMAT, reason)
-        raise _unsupported(UNKNOWN_FORMAT, f"ffprobe doesn't recognise the file ({reason})")
+            raise corrupt_error(header_container or UNKNOWN_FORMAT, reason)
+        raise unsupported_error(UNKNOWN_FORMAT, f"ffprobe doesn't recognise the file ({reason})")
 
     probed = json.loads(completed.stdout)
     container = probed.get("format", {})
     format_name = container.get("format_name", UNKNOWN_FORMAT)
     if format_name in IMAGE_DEMUXERS or format_name.endswith(IMAGE_DEMUXER_SUFFIX):
-        raise _unsupported(format_name, f"ffmpeg reads the file as an image ({format_name})")
+        raise unsupported_error(UNKNOWN_FORMAT, f"ffmpeg reads the file as an image or text ({format_name})")
+    name = header_container or format_name.split(",")[0]
     streams = probed.get("streams", [])
     if not streams:  # ffprobe opens an MP4 cut before its index without an error, and finds nothing in it
-        raise _corrupt(format_name, "the container holds no stream: its index is missing, the file is truncated")
+        raise corrupt_error(name, "the container holds no stream: its index is missing, the file is truncated")
     videos = [s for s in streams if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")]
     if not videos:
-        raise _unsupported(format_name, "the file has no video stream")
-    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        raise unsupported_error(name, "the file has no video stream")
 
     probe = VideoProbe(
+        container=name,
         format_name=format_name,
         major_brand=container.get("tags", {}).get("major_brand"),
-        duration=float(container.get("duration") or videos[0].get("duration") or 0),
+        duration=_duration(container.get("duration"), videos[0].get("duration")),
         video=videos[0],
-        audio=audio,
+        video_count=len(videos),
+        audio_streams=tuple(s for s in streams if s.get("codec_type") == "audio"),
+        track_ids={
+            s["index"]: int(s["id"], 16)
+            for s in streams
+            if name in QUICKTIME_CONTAINERS and str(s.get("id", "")).startswith("0x")
+        },
     )
     count, _, failure = _decoded_frames(ffmpeg, path, videos[0]["index"], ["-frames:v", "1"])
     if failure or count == 0:
-        raise _corrupt(format_name, failure or "the first frame can't be decoded")
+        raise corrupt_error(name, failure or "the first frame can't be decoded")
     end_error = _check_end(ffmpeg, path, probe, float(container.get("start_time") or 0))
     if end_error is not None:
-        raise _corrupt(format_name, end_error)
+        raise corrupt_error(name, end_error)
     return probe
+
+
+def _duration(*candidates: object) -> float | None:
+    """The first duration ffprobe gives, the container's before the stream's; None if neither does."""
+    for value in candidates:
+        if value not in (None, "", "N/A"):
+            return float(str(value))
+    return None
