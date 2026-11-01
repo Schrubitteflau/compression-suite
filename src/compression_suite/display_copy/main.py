@@ -1,7 +1,7 @@
 """Core logic for display-copy: an H.264 copy of a video, for display in a browser only, made only when needed.
 
 The original is only read, never modified. It is served as is when a browser plays it: see `copy_reasons` for the
-rule. Otherwise the copy is written atomically by `write_display_copy`, which the preview portions reuse.
+rule. Otherwise the copy is written atomically by `write_display_copy`.
 """
 
 import os
