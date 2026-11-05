@@ -15,6 +15,7 @@ version 1 shape, so a client written for version 1 only needs to accept 2 for th
 """
 
 import json
+import sys
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
@@ -26,6 +27,9 @@ from typer.core import TyperCommand
 from compression_suite.utils.cli import stderr_console
 
 SCHEMA_VERSION = 2
+
+# The command running under `--json`, whose tool runs are announced on stderr; `None` otherwise
+_announcing: str | None = None
 
 
 class ErrorCode(str, Enum):
@@ -99,12 +103,23 @@ def error_envelope(command: str, error: CommandError) -> dict[str, Any]:
     }
 
 
+def announce_tool_command(tool_command: list[str]) -> None:
+    """Under `--json`, say on stderr, as a JSON line, the exact command line of a tool about to run."""
+    if _announcing is None:
+        return
+    line = {"schema_version": SCHEMA_VERSION, "command": _announcing, "tool_command": tool_command}
+    sys.stderr.write(json.dumps(line) + "\n")
+    sys.stderr.flush()
+
+
 def run_command(command: str, json_mode: bool, body: Callable[[], dict[str, Any]]) -> None:
     """Run a command body and report its outcome according to the contract.
 
     In JSON mode, the envelope is the only thing written on stdout. Otherwise errors
     are printed on stderr. Either way, failures exit with the code bound to their error code.
     """
+    global _announcing
+    _announcing = command if json_mode else None
     try:
         result = body()
         document = json.dumps(success_envelope(command, result)) if json_mode else None

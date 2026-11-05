@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from compression_suite.compress_image.main import check_output, current_umask
-from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.contract import CommandError, ErrorCode, announce_tool_command
 from compression_suite.utils.formats import UNKNOWN_FORMAT
 from compression_suite.utils.pinned_tools import resolve_tool
 from compression_suite.utils.video_probe import corrupt_error
@@ -84,6 +84,7 @@ def _run_ffmpeg(
     """
     progress = ["-nostats", "-progress", "pipe:1"] if on_progress is not None else []
     command = [str(ffmpeg), "-v", "error", "-nostdin", "-y", *progress, *args]
+    announce_tool_command(command)
     process = subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,

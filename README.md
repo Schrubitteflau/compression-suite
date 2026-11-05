@@ -70,6 +70,7 @@ You should see the available commands listed. `uv run compression_suite doctor` 
   - `preset`, `crf`: the preset and the CRF used (`preview-portion` and `compress-video`).
 - **Same writing**: the output is written into a file without a name, which gets the output's name only once complete. A command stopped at any point, even by SIGKILL, leaves neither a partial output nor a temporary file; without `--overwrite`, a file that appears at the output meanwhile is kept (`output_exists`).
 - **Same stopping**: SIGINT, SIGTERM and SIGHUP give the `interrupted` envelope (exit 130) from the moment the command starts its checks until the output takes its name; once it is named, the command is reported done. A signal while the process is still starting (Python loading the command, about the first 0.2 to 0.3 s) ends it by that signal (exit 128 + the signal's number, 143 for SIGTERM), with no JSON on stdout and nothing written.
+- **Same announces**: under `--json`, right before each ffmpeg run (two for `preview-portion`), stderr gets one JSON line with its exact command line: `{"schema_version": 2, "command": "preview-portion", "tool_command": ["/path/to/ffmpeg", "-v", "error", ...]}`. It is the line that really runs: it writes into `/dev/fd/<n>`, a file without a name, so replaying it by hand means putting a real path there. Without `--json`, nothing is announced.
 - **Same sound**: a preview portion keeps the audio streams the export keeps, each played as the export plays it, a late start included.
 
 ### Tinify API key

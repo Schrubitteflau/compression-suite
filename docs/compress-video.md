@@ -88,7 +88,7 @@ With `--json`, the progress is written on stderr, one JSON object per line, abou
 - **`encoded_seconds`**: the seconds of video encoded so far; **`duration_seconds`**: the video's duration.
 - **`percent`**: never goes back, stays below 100 while encoding; the last line, at 100, is written once the output is in place, just before the document on stdout. `duration_seconds` and `percent` are `null` for a video whose duration ffprobe can't read (a Matroska file written to a pipe, for instance); the last line then has `percent` 100 and the seconds encoded.
 
-The first line comes once the checks have passed, when encoding starts. An export that fails or is stopped writes no line at 100. Without `--json`, stderr shows a progress bar and a report instead.
+Stderr also holds the line announcing the ffmpeg run (see [the common contract](../README.md#the-video-commands-common-contract)), which has no `progress`. The first progress line comes once the checks have passed, when encoding starts. An export that fails or is stopped writes no line at 100. Without `--json`, stderr shows a progress bar and a report instead.
 
 ## JSON output (`--json`)
 

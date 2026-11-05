@@ -156,3 +156,24 @@ def test_a_text_file_ffmpeg_reads_as_text_is_refused_alike(tmp_path: Path, name:
     text.write_text("Not a video, though ffmpeg's tty demuxer reads it as one\n" * 20)
     error = _expect_same_error(text, tmp_path, "unsupported_format")
     assert error["details"] == {"detected_format": "unknown"}
+
+
+@pytest.mark.parametrize(("command", "runs"), [("display-copy", 1), ("preview-portion", 2), ("compress-video", 1)])
+def test_each_ffmpeg_run_is_announced_on_stderr_under_json(tmp_path: Path, command: str, runs: int):
+    video = _copy(HEVC_ROTATED, tmp_path)
+    result = runner.invoke(app, _arguments(command, video, tmp_path / "out.mp4"))
+    assert json.loads(result.stdout)["ok"] is True  # stdout: the envelope alone
+    announced = [json.loads(line) for line in result.stderr.splitlines() if "tool_command" in line]
+    assert len(announced) == runs
+    assert all((line["schema_version"], line["command"]) == (2, command) for line in announced)
+    for line in announced:
+        assert line["tool_command"][0] == str(resolve_tool("ffmpeg"))
+    assert str(video.absolute()) in " ".join(announced[0]["tool_command"])
+
+
+def test_nothing_is_announced_without_json(tmp_path: Path):
+    video = _copy(HEVC_ROTATED, tmp_path)
+    arguments = [arg for arg in _arguments("display-copy", video, tmp_path / "out.mp4") if arg != "--json"]
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    assert "tool_command" not in result.stderr

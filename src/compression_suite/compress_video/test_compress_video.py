@@ -97,6 +97,11 @@ def _copy(sample: Path, folder: Path) -> Path:
     return path
 
 
+def _progress_of(line: str) -> dict | None:
+    """The progress a JSON line of stderr tells, `None` for the announce of an ffmpeg run."""
+    return json.loads(line).get("progress")
+
+
 def _invoke(source: Path, output: Path, *args: str, preset: str = "default") -> Result:
     return runner.invoke(app, ["compress-video", str(source), "--preset", preset, "-o", str(output), "--json", *args])
 
@@ -308,7 +313,7 @@ def test_progress_goes_to_stderr_as_json_lines_ending_at_100(tmp_path: Path):
     result = _invoke(source, output)
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["ok"] is True  # stdout: the envelope alone
-    lines = [json.loads(line) for line in result.stderr.splitlines()]
+    lines = [json.loads(line) for line in result.stderr.splitlines() if _progress_of(line)]
     assert len(lines) >= 3
     assert all((line["schema_version"], line["command"]) == (2, "compress-video") for line in lines)
     progress = [line["progress"] for line in lines]
@@ -484,7 +489,7 @@ def test_an_interrupted_export_leaves_no_file(tmp_path: Path, signum: signal.Sig
     try:
         assert process.stderr is not None
         for line in process.stderr:  # wait until it encodes, with its temporary file
-            if json.loads(line)["progress"]["percent"] > 0:
+            if (_progress_of(line) or {"percent": 0})["percent"] > 0:
                 break
         assert _files(tmp_path) == {"long.mp4"}  # it encodes into files that have no name yet
         process.send_signal(signum)
@@ -525,7 +530,7 @@ def _start_export(source: Path, output: Path, *args: str) -> subprocess.Popen:
     )
     assert process.stderr is not None
     for line in process.stderr:
-        if json.loads(line)["progress"]["percent"] > 0:
+        if (_progress_of(line) or {"percent": 0})["percent"] > 0:
             return process
     raise AssertionError(f"compress-video never encoded: {process.communicate()}")
 
@@ -680,7 +685,7 @@ def test_a_truncated_matroska_is_corrupt_and_nothing_is_written(tmp_path: Path, 
     error = _assert_error(result, "input_corrupt", 27)
     assert error["details"] == {"detected_format": container}
     assert _files(tmp_path) == {"cut.mkv"}
-    assert all(json.loads(line)["progress"]["percent"] < 100 for line in result.stderr.splitlines())
+    assert all((_progress_of(line) or {"percent": 0})["percent"] < 100 for line in result.stderr.splitlines())
 
 
 def _udta_first(source: Path, destination: Path) -> Path:
