@@ -148,6 +148,7 @@ name = "compression-suite"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "ffmpeg-python" },
     { name = "imagehash" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -175,6 +176,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
     { name = "coverage", marker = "extra == 'test'" },
     { name = "ffmpeg-python", specifier = ">=0.2.0" },
     { name = "imagehash", specifier = ">=4.3.2" },
