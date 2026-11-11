@@ -35,7 +35,7 @@ class CorruptImageError(Exception):
     """A file whose format is recognised but that its decoder can't read to the end; the message is the decoder's."""
 
     def command_message(self, detected_format: str) -> str:
-        """The message of the `input_corrupt` error, shown as it is by WelcomeApp."""
+        """The message of the `input_corrupt` error, shown as it is by the caller."""
         return f"Damaged {detected_format} file, it can't be decoded: {self}"
 
 

@@ -1,4 +1,4 @@
-"""CLI tests for video-presets: the named video presets, listed for WelcomeApp."""
+"""CLI tests for video-presets: the named video presets, listed for the caller."""
 
 import json
 

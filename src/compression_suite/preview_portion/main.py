@@ -8,7 +8,7 @@ Two runs of the pinned ffmpeg, the original only read:
 2. that encoded portion is decoded and rendered in H.264 for display (`display_video_args`, as the display copy),
    into the output, written atomically.
 
-The command keeps nothing between calls: WelcomeApp chooses which portions to encode and which to keep.
+The command keeps nothing between calls: the caller chooses which portions to encode and which to keep.
 """
 
 import json
