@@ -24,7 +24,7 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
   are fabricated by a versioned script. Nothing personal in issue comments: no GPS value, no real path, no image.
 - Paid services: no real Tinify call. Tests mock `tinify`. Never put a Tinify key anywhere; never run
   `compress-image` on the real configuration.
-- WelcomeApp (`~/WelcomeApp`) is read-only for this work; its `bun dev` (port 27183) is never started or stopped.
+- Nothing outside this repo is modified: the caller's checkout is read-only for this work, and its dev server (port 27183) is never started or stopped.
 
 ## Branches and commits
 
@@ -38,25 +38,25 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 
 ## Docs
 
-- Specs and decision journal: in WelcomeApp (`~/WelcomeApp/docs/spec-*.md`, `spec-*.decisions.md`, `docs/adr/`).
-  Here: the issues (parent and tickets) carry the contract decisions; `README.md` documents each command.
+- No spec is kept in this repo: the issues (parent and tickets) carry the contract decisions, and `README.md`
+  documents each command.
 
 ## Real usage
 
 What the product really meets; reviewers judge `blocking` against it.
 
-- Caller: WelcomeApp, through the CLI in `--json` mode. No other caller.
+- Caller: one desktop app, through the CLI in `--json` mode. No other caller.
 - Inputs: files from phones. Galaxy S23 videos (HEVC in MP4), iPhone HEIC photos, JPEG.
 - Some inputs are cut short, when a Syncthing sync was interrupted.
-- WelcomeApp runs several calls in parallel to prepare the next files (inspect, preview, display copy). It runs only one
+- The caller runs several calls in parallel to prepare the next files (inspect, preview, display copy). It runs only one
   export at a time.
 
 ## Project edge cases
 
 Failure modes this project has already met; reviewers check them on top of the generic list:
 
-- stdout must hold only the JSON envelope in `--json`: any stray print or tool output breaks WelcomeApp;
-- a new error code only when WelcomeApp reacts differently; otherwise the reason goes in the message;
+- stdout must hold only the JSON envelope in `--json`: any stray print or tool output breaks the caller;
+- a new error code only when the caller reacts differently; otherwise the reason goes in the message;
 - a decoder that accepts a damaged file silently (truncated HEIC with missing tiles);
 - metadata lost or rewritten by the encoder (orientation applied twice, colour profile, dates), shown as no loss;
 - a write killed halfway leaving a partial output or a temporary file next to it; the original's bytes or mtime

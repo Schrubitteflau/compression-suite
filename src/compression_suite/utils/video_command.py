@@ -1,4 +1,4 @@
-"""What the three video commands WelcomeApp calls (display-copy, preview-portion, compress-video) share in their JSON
+"""What the three video commands the caller runs (display-copy, preview-portion, compress-video) share in their JSON
 contract: the checks of their output path, and the fields of their `result` that describe the same things.
 
 - `input`, `output`: `file_field`, `{path, format, size_bytes, mtime}`; `format` is the container

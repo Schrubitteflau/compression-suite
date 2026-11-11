@@ -1,6 +1,6 @@
 """How a video stream is rendered for display in a browser: H.264 8 bits 4:2:0, visually lossless, SDR.
 
-Shared by every command that hands a video to WelcomeApp's players (the display copy, the preview portions, the
+Shared by every command that hands a video to the caller's players (the display copy, the preview portions, the
 copy of an export), so that they all look alike.
 
 - libx264, CRF 16, preset `superfast`: visually lossless, and fast enough not to keep the user waiting.

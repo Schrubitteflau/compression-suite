@@ -1,4 +1,4 @@
-"""Contract tests of the three video commands WelcomeApp calls (display-copy, preview-portion, compress-video): for the
+"""Contract tests of the three video commands the caller runs (display-copy, preview-portion, compress-video): for the
 same video, their common fields have the same names, shapes and values, and the same error gets the same code,
 message and details. The pinned tools run for real, on the fabricated samples."""
 

@@ -2,7 +2,7 @@
 
 Tell whether a browser plays a video as is, and if not, write an H.264 copy of it, for display only. The video itself is only read: its bytes and its modification date never change, and it is the file that gets stored.
 
-A browser under Linux doesn't play HEVC, the codec of phone videos: WelcomeApp shows the copy instead. A video the browser already plays is **not** copied: the command says so, writes nothing, and WelcomeApp serves the original. Opening a long video that plays as is costs no wait.
+A browser under Linux doesn't play HEVC, the codec of phone videos: the caller shows the copy instead. A video the browser already plays is **not** copied: the command says so, writes nothing, and the caller serves the original. Opening a long video that plays as is costs no wait.
 
 ffmpeg and ffprobe are the pinned ones (`just install-tools`), never those of the `PATH`. Every path is handed to them with the `file:` protocol: a file named `concat:x.mov` is that file, never ffmpeg's `concat` protocol. Neither exiftool nor a Tinify key is needed.
 
@@ -47,7 +47,7 @@ A rotation (display matrix) doesn't call for a copy: browsers apply it.
 - No metadata (dates, GPS): the copy is for display only. Its index comes first (`+faststart`): the browser starts at once.
 - Always MP4, whatever the extension of `--output`.
 
-The rendering of the video (codec, timestamps, orientation, HDR) is shared with the other commands that hand a video to WelcomeApp's players.
+The rendering of the video (codec, timestamps, orientation, HDR) is shared with the other commands that hand a video to the caller's players.
 
 ## JSON output (`--json`)
 
@@ -114,6 +114,6 @@ The writing is shared by the three video commands. ffmpeg writes into an anonymo
 ## Limits
 
 - **Damage in the middle of a video that needs no copy** is not detected (see [Damaged videos](#damaged-videos)).
-- **Two simultaneous calls to the same `--output`** with `--overwrite` both report success, and the last one written wins; without it, the second one to finish gets `output_exists`. WelcomeApp gives each call its own output path.
+- **Two simultaneous calls to the same `--output`** with `--overwrite` both report success, and the last one written wins; without it, the second one to finish gets `output_exists`. The caller gives each call its own output path.
 - **Non-square pixels**: `width` and `height` are the stored ones, rotation applied; a sample aspect ratio is not applied.
 - **Browsers checked**: Chrome 156 and Firefox 136 under Linux play neither picture of a S23 HEVC (Chrome plays its sound only, Firefox refuses it), and play the copy upright, as well as an H.264 MP4 or MOV, rotated or not.

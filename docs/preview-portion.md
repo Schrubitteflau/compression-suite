@@ -2,7 +2,7 @@
 
 Encode a portion of a video (3 s by default) at the exact settings of an export, and write it in H.264 for display in a browser. The video itself is only read: its bytes and its modification date never change.
 
-Encoding at the export's settings is several times slower than playing (x265 at the `slow` speed): no real stream is possible. WelcomeApp calls this command once per portion, ahead of playback, and plays the portions next to the original. The command keeps nothing from one call to the next: which portions to encode, when to start again after a jump or a change of setting, and which portions to keep are WelcomeApp's choices.
+Encoding at the export's settings is several times slower than playing (x265 at the `slow` speed): no real stream is possible. The caller runs this command once per portion, ahead of playback, and plays the portions next to the original. The command keeps nothing from one call to the next: which portions to encode, when to start again after a jump or a change of setting, and which portions to keep are the caller's choices.
 
 ffmpeg and ffprobe are the pinned ones (`just install-tools`), never those of the `PATH`. Every path is handed to them with the `file:` protocol. Neither exiftool nor a Tinify key is needed.
 
@@ -95,4 +95,4 @@ Every check that can fail without encoding runs first, in this order: preset and
 
 - **Damage before the portion**: the exact seek decodes from the keyframe before `--start`. A decoder error in those frames, which the portion doesn't show, makes the video damaged all the same; damage elsewhere in the video is not met (the video is probed only at its start and end).
 - **A video with two video streams** gets a portion of the first one, while `compress-video` refuses it (`unsupported_format`).
-- **Two simultaneous calls to the same `--output`** with `--overwrite` both report success, and the last one written wins; without it, the second one to finish gets `output_exists`. WelcomeApp gives each call its own output path.
+- **Two simultaneous calls to the same `--output`** with `--overwrite` both report success, and the last one written wins; without it, the second one to finish gets `output_exists`. The caller gives each call its own output path.
