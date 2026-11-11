@@ -28,8 +28,6 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 
 ## Branches and commits
 
-- Integration branch: `<spec-slug>-lot-<n>` (e.g. `rangement-medias-lot-3`), created from `master`. Ticket branches:
-  `<integration-branch>-<ticket>`.
 - Running `/ship` is Antoine's explicit request to commit on the integration and ticket branches, never on `master`.
   Add only the files the ticket touched.
 - Commit messages: English, in the style of `git log` (imperative, what changed for the user). Never `Closes #N`.
