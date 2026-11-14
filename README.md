@@ -59,6 +59,8 @@ You should see the available commands listed. `uv run compression_suite doctor` 
 
 ### The video commands' common contract
 
+What a program calling the CLI can rely on, all commands included, starts at [CLI contract](docs/cli-contract.md).
+
 `display-copy`, `preview-portion` and `compress-video` speak the same language under `--json` (contract `schema_version` 2, the version every command's JSON document carries). Version 2 changed only the fields of these three video commands: the JSON of the image commands (`compress-image`, `inspect`, `preview`) and of `doctor` and `video-presets` keeps the shape it had in version 1, so a client written for version 1 only needs to accept 2 for them.
 
 - **Same reading of the video**: the same probe (pinned ffprobe, first frame and last seconds decoded) accepts the same files, any container ffprobe reads that holds a video stream (MP4, MOV, 3GP, Matroska, WebM, AVI, MPEG-TS, FLV, Ogg, MPEG-PS...), and refuses the others with the same error code, message and `details.detected_format`: `unsupported_format` (not a video: an image, audio only, an unknown file) or `input_corrupt` (a video that can't be decoded, cut short by an interrupted sync, for instance). Only `compress-video`, which stores the result in place of the original, also refuses a video with two video streams.
