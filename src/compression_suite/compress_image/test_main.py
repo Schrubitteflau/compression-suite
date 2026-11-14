@@ -11,7 +11,7 @@ from compression_suite.utils.pinned_tools import resolve_tool
 
 runner = CliRunner()
 
-TEST_IMAGE = Path(__file__).resolve().parent / "testfiles" / "logitech_keyboard.jpg"
+TEST_IMAGE = Path(__file__).resolve().parent / "samples" / "photo.jpg"
 
 
 def _mock_tinify():
