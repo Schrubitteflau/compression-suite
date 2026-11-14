@@ -8,13 +8,13 @@ from compression_suite.cli import app
 
 runner = CliRunner()
 
-TEST_IMAGE = Path(__file__).resolve().parent / "testfiles" / "logitech_keyboard.jpg"
+TEST_IMAGE = Path(__file__).resolve().parents[1] / "compress_image" / "samples" / "photo.jpg"
 
 
 def test_file_to_file(tmp_path: Path):
     """Output is a valid JPEG within the target size."""
     out = tmp_path / "out.jpg"
-    max_size_kb = 500
+    max_size_kb = 200  # the sample weighs about 400 KB
     result = runner.invoke(
         app,
         [
@@ -39,7 +39,7 @@ def test_stdin_to_stdout():
         [
             "reduce-jpeg-size",
             "--max-size",
-            "2000",
+            "300",
         ],
         input=TEST_IMAGE.read_bytes(),
     )

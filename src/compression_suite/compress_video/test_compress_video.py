@@ -289,11 +289,13 @@ def test_dance_preset_drops_the_audio(phone_video: Path, tmp_path: Path):
 
 
 def test_h264_video_without_metadata_nor_audio(tmp_path: Path):
-    source = _make_video(tmp_path / "plain.mp4", codec="h264", size="48x64", audio=False, phone_metadata=False)
+    # Not 40 or 48 pixels wide: x265's AVX code (4.1 and 4.3 at least) overruns a heap buffer on such widths, which
+    # glibc 2.43 catches ("malloc(): invalid size", "double free or corruption"), so ffmpeg aborts. Phones film wider.
+    source = _make_video(tmp_path / "plain.mp4", codec="h264", size="64x96", audio=False, phone_metadata=False)
     output = tmp_path / "out.mp4"
     _compress(source, output)
     video = _stream(output, "video")
-    assert (video["codec_name"], video["width"], video["height"]) == ("hevc", 48, 64)
+    assert (video["codec_name"], video["width"], video["height"]) == ("hevc", 64, 96)
     assert [stream["codec_type"] for stream in _probe(output)["streams"]] == ["video"]
 
 
