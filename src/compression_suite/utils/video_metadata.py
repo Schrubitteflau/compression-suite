@@ -6,6 +6,11 @@ and the dimensions are read on the video track (`TrackN` group whose handler is 
 The tracks of an export are numbered anew (a data track dropped before the audio, a cover art first): `match_tracks`
 names each track of the export after the original track it comes from, so that the diff compares a track with its
 own original, and a track the export doesn't keep shows as lost as a whole.
+
+On a Galaxy S23 video (HEVC, rotated or not, with GPS), an export loses nothing unexpectedly, with or without its
+sound. Known limits: a MOV original also shows, as unexpected, QuickTime tags an MP4 doesn't hold (`HandlerClass`,
+`VendorID`, an audio channel layout box, a language `Unknown (32767)` written `und`), and a Matroska or AVI date
+shows as lost, though the output holds it as its creation date.
 """
 
 import math

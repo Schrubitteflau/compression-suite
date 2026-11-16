@@ -9,7 +9,8 @@ Shared by the video commands: they all start from `probe_video`, which raises th
   holding no stream at all (an MP4 cut before its `moov` box, which a phone writes last), a video whose first frame
   can't be decoded, or whose decoded frames stop short of the end its container announces (an MP4 cut in its data,
   its index first). Only the first frame and the last seconds are decoded, so that a long video is probed in a
-  moment: damage in the middle is only met by a command that decodes everything.
+  moment: damage in the middle is only met by a command that decodes everything. MPEG-TS has no index and declares
+  no duration: a file cut exactly between packets of each stream is a shorter, valid stream, never `input_corrupt`.
 
 Both carry `details.detected_format`: the image format (`jpeg`, `heic`...), else the video container, named as
 `VideoProbe.container` names it, else `unknown`. Any container ffprobe reads is accepted, if it holds a video stream.

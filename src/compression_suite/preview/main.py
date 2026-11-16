@@ -3,6 +3,12 @@
 The HEIC itself is only read, never modified. pillow-heif (pinned by the lockfile) decodes it, not Ubuntu's
 heif-convert. It is called directly rather than registered as a Pillow plugin: registering it would let Pillow decode
 HEIC everywhere else too, changing what inspect reports.
+
+Known limits: no automated test covers an Apple HDR HEIC (with a gain map): pillow-heif can't write an auxiliary
+image, so none can be fabricated, and real ones can't be versioned. Real iPhone HDR HEICs, rotated and mirrored, in
+Display P3, Apple Wide Color Sharing or without profile, were checked by hand. A HEIC without ICC profile gives a JPEG
+without one, read as sRGB: right for the iPhone HEICs met (`nclx` box with unspecified primaries), wrong for one
+whose `nclx` box declares other primaries (P3, BT.2020), which would lose them; none was met.
 """
 
 import io

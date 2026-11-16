@@ -9,8 +9,9 @@ restated.
 | Part | Its one place |
 |---|---|
 | Envelope, `schema_version`, error codes and their exit codes | [`utils/contract.py`](../src/compression_suite/utils/contract.py): the module docstring, `SCHEMA_VERSION`, `ErrorCode`, `EXIT_CODES` |
-| What the video commands share (reading, `result` fields, atomic writing, signals, stderr announces) | [README, "The video commands' common contract"](../README.md#the-video-commands-common-contract) |
-| A command's options, `result` fields, and the error codes it gives with their `details` | That command's page, below |
+| What the video commands share | Reading the video: [`utils/video_probe.py`](../src/compression_suite/utils/video_probe.py); `result` fields: [`utils/video_command.py`](../src/compression_suite/utils/video_command.py); atomic writing: [`utils/ffmpeg_output.py`](../src/compression_suite/utils/ffmpeg_output.py); signals: [`utils/interruptions.py`](../src/compression_suite/utils/interruptions.py); stderr announces: `announce_tool_command` in `contract.py` |
+| A command's options | `compression_suite COMMAND --help`, from its `cli.py` |
+| A command's `result` fields, and the error codes it gives with their `details` | Its code, linked below, and its tests |
 | Tests holding the contract | [`test_video_contract.py`](../src/compression_suite/test_video_contract.py) and each command's tests |
 
 ## Rules
@@ -25,25 +26,25 @@ restated.
   Any incompatible change to a document's shape bumps it; adding a field does not. A caller checks it and refuses a
   version it doesn't know. Current version: 2 (what changed in 2: the docstring of `contract.py`).
 - **Error codes**: a new code only when the caller would react differently; otherwise the reason goes in `message`.
-  `message` is for humans and may change; `code` and the `details` keys a command's page names are stable.
+  `message` is for humans and may change; `code` and the `details` keys a command gives are stable.
 - **stderr**: under `--json`, the machine-readable lines are JSON objects, each with `schema_version` and `command`:
   a `tool_command` announce before each ffmpeg run (video commands), and `progress` lines (`compress-video`). Other
   text may appear there (warnings, a crash's traceback): a caller ignores any line it doesn't know.
 
 ## Commands the caller runs
 
-Each runs with `--json`. The options listed are the ones the caller passes; the page has them all.
+Each runs with `--json`. The options listed are the ones the caller passes; `--help` has them all.
 
-| Command | Options passed | Page |
+| Command | Options passed | Code |
 |---|---|---|
-| `inspect FILE` | none | [inspect](inspect.md) |
-| `preview FILE` | `-o`, `--overwrite` | [preview](preview.md) |
-| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss` | [compress-image](compress-image.md) |
-| `video-presets` | none | [video-presets](video-presets.md) |
-| `display-copy VIDEO` | `--output`, `--overwrite` | [display-copy](display-copy.md) |
-| `preview-portion VIDEO` | `--preset`, `--crf`, `--start`, `--duration`, `--output` | [preview-portion](preview-portion.md) |
-| `compress-video VIDEO` | `--preset`, `--crf`, `--output`; reads the `progress` lines | [compress-video](compress-video.md) |
-| `doctor` | none | [doctor](doctor.md) |
+| `inspect FILE` | none | [`inspect_file/`](../src/compression_suite/inspect_file/) |
+| `preview FILE` | `-o`, `--overwrite` | [`preview/`](../src/compression_suite/preview/) |
+| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss` | [`compress_image/`](../src/compression_suite/compress_image/) |
+| `video-presets` | none | [`utils/video_presets.py`](../src/compression_suite/utils/video_presets.py) |
+| `display-copy VIDEO` | `--output`, `--overwrite` | [`display_copy/`](../src/compression_suite/display_copy/) |
+| `preview-portion VIDEO` | `--preset`, `--crf`, `--start`, `--duration`, `--output` | [`preview_portion/`](../src/compression_suite/preview_portion/) |
+| `compress-video VIDEO` | `--preset`, `--crf`, `--output`; reads the `progress` lines | [`compress_video/`](../src/compression_suite/compress_video/) |
+| `doctor` | none | [`doctor/`](../src/compression_suite/doctor/) |
 
 Error codes the caller branches on, beyond showing `message`: `input_not_found`, `input_unreadable`,
 `input_corrupt`, `motion_photo`, `tool_missing` (it shows `details.install_command`), `api_key_missing`, and

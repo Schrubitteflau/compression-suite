@@ -2,6 +2,13 @@
 
 The original is only read, never modified. It is served as is when a browser plays it: see `copy_reasons` for the
 rule. Otherwise the copy is written atomically by `write_display_copy`.
+
+Why a copy: under Linux, Chrome 156 and Firefox 136 play no picture of a Galaxy S23 HEVC video (Chrome plays its
+sound only, Firefox refuses it); both play the copy upright, as well as an H.264 MP4 or MOV, rotated or not.
+
+Known limits: damage in the middle of a video that needs no copy is not met (only a copy decodes everything);
+`width` and `height` don't apply a sample aspect ratio (non-square pixels). Two calls writing the same `--output` at
+once both succeed with `--overwrite`, the last one written winning: the caller gives each call its own output path.
 """
 
 import time

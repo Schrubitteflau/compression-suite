@@ -40,7 +40,10 @@ class AudioSettings:
 
 @dataclass(frozen=True)
 class VideoPreset:
-    """A named encoding setting. `audio` is None when the output keeps no audio track."""
+    """A named encoding setting. `audio` is None when the output keeps no audio track.
+
+    `id` is stable, the caller stores it and passes it back; `label` is for display, in French, and may change.
+    """
 
     id: str
     label: str

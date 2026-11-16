@@ -8,7 +8,15 @@ Two runs of the pinned ffmpeg, the original only read:
 2. that encoded portion is decoded and rendered in H.264 for display (`display_video_args`, as the display copy),
    into the output, written atomically.
 
-The command keeps nothing between calls: the caller chooses which portions to encode and which to keep.
+Why portions rather than a stream: x265 at the presets' `slow` speed encodes several times slower than the video
+plays. The command keeps nothing between calls: the caller chooses which portions to encode and which to keep.
+
+A portion weighs more than the same seconds of a whole export (its `encoded.bitrate_kbps` is an upper bound): it
+starts with a keyframe, where an export places one every few seconds, and holds its own index and headers.
+
+Known limits: a decoder error between the keyframe before `--start` and `--start`, which the portion doesn't show,
+still makes the video damaged. A video with two video streams gets a portion of the first one, while compress-video
+refuses it.
 """
 
 import json
