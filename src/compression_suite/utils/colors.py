@@ -19,6 +19,8 @@ SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
 # Size of the RGB copies compared, and the largest mean difference of a channel (out of 255) below which two images
 # show the same colours. On the S23 P3 sample, compressed by Tinify (JPEG, PNG, WebP, AVIF), the conversion to sRGB
 # leaves at most 1.05; its P3 pixels read as sRGB, or its sRGB pixels read as P3, differ by 2.7 or more.
+# Known limit: a change confined to a small part of the image (a saturated object on a neutral background) may
+# average out below the threshold.
 COMPARED_SIZE = (32, 32)
 SAME_COLORS_MAX_DIFFERENCE = 1.5
 

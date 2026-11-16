@@ -12,6 +12,8 @@ A motion photo carries a video after its image, which a re-encoding drops. Signa
   `SEFT` zone are known structures; a `SEFT` zone without `MotionPhoto_Data` thus gives no signal, while an
   unreadable index, or bytes between its entries, are unexplained.
   A file whose end can't be found (truncated, unknown format, AVIF) is not checked for trailing bytes.
+  Any unexplained byte counts, even zero padding after the EOI: on 543 real phone photos (92 with a `SEFT` zone),
+  only one, a WhatsApp JPEG carrying 900 KB of unknown bytes after its image, was flagged.
 
 The XMP is read in the tags of exiftool (`-j -G1`); the end of the image and the trailer, in the bytes.
 """

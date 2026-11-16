@@ -36,8 +36,8 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 
 ## Docs
 
-- No spec is kept in this repo: the issues (parent and tickets) carry the contract decisions, and `README.md`
-  documents each command.
+- No spec is kept in this repo: the issues (parent and tickets) carry the contract decisions. Each command is
+  documented by its code and `--help`; `docs/cli-contract.md` maps what a caller relies on, linking to the code.
 
 ## Real usage
 
