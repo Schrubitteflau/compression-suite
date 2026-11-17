@@ -1,7 +1,9 @@
 """Core logic for compress-image: Tinify API compression with metadata preservation."""
 
 import io
+import math
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -9,6 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -31,6 +34,7 @@ from compression_suite.utils.dates import exif_date, parse_date, same_moment
 from compression_suite.utils.decoding import check_decodable
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
 from compression_suite.utils.metadata_diff import (
+    PNG_COLOUR_TYPE_OFFSET,
     REENCODING_REASON,
     ExpectedLoss,
     diff_metadata,
@@ -146,8 +150,16 @@ CONVERTED_LOSSES = [
         "Palette",
         "ProfileName",
         "SignificantBits",
+        # Rendering intent and background colour, which only a viewer of the PNG reads
+        "SRGBRendering",
+        "BackgroundColor",
     )
 ]
+
+# The gAMA chunk an sRGB PNG declares (0.45455, PNG specification): a JPEG without profile is read as sRGB already. Any
+# other gamma changes how a viewer that reads it displays the PNG, which the JPEG can't tell, and is lost unexpectedly.
+SRGB_GAMMA_CHUNK = struct.pack(">I", 45455)
+SRGB_GAMMA_LOSS = ExpectedLoss("PNG:Gamma", CONVERTED_REASON)
 
 # PNG text blocks with a standard equivalent in a JPEG, rewritten to it when a PNG is converted, so that photo managers
 # read them: `Group:Name` of the block as exiftool reads it -> `Group:Name` of its JPEG tag. Any other text block has
@@ -165,6 +177,31 @@ TEXT_BLOCK_TARGETS = {
 }
 
 CREATION_TIME = "PNG:CreationTime"
+
+# The time of the last modification of a PNG (tIME), carried over like the text blocks, under the same rules, to the
+# EXIF modification date with its offset: the PNG gives it in UTC. Not when the PNG holds an offset already, which the
+# date would then be read with.
+MODIFY_TIME = "PNG:ModifyDate"
+MODIFY_DATE = "IFD0:ModifyDate"
+MODIFY_TIME_OFFSET = "ExifIFD:OffsetTime"
+
+# The resolution of a PNG (pHYs), carried over like the text blocks: in pixels per metre, to the EXIF resolution in
+# pixels per centimetre, which keeps the value exact; its unit unknown, an aspect ratio only, to the JFIF's, which
+# gives one without unit. The tags of the PNG, of the EXIF and of the JFIF, for x, y and the unit. The EXIF resolution
+# is written whole or not at all: a PNG holding any of its tags keeps them, and the resolution is moved if they give
+# the same one, in any unit, within the rounding of pHYs to whole pixels per metre. The unit is moved with x and y only.
+PHYS_TAGS = ("PNG-pHYs:PixelsPerUnitX", "PNG-pHYs:PixelsPerUnitY", "PNG-pHYs:PixelUnits")
+EXIF_RESOLUTION_TAGS = ("IFD0:XResolution", "IFD0:YResolution", "IFD0:ResolutionUnit")
+JFIF_RESOLUTION_TAGS = ("JFIF:XResolution", "JFIF:YResolution", "JFIF:ResolutionUnit")
+PHYS_UNKNOWN, PHYS_METRE = 0, 1
+# A JFIF density is 16-bit: exiftool refuses a larger one tag by tag, which would leave the other side alone, a wrong
+# aspect ratio
+JFIF_MAX_DENSITY = 0xFFFF
+# Pixels per metre in one pixel per unit, by EXIF unit as exiftool names it
+PIXELS_PER_METRE = {"cm": 100, "inches": 1 / 0.0254}
+PHYS_ROUNDING = 0.5
+
+XMP_TOOLKIT = "XMP-x:XMPToolkit"
 
 
 MOTION_PHOTO_REASON = "photo animée : perte autorisée"
@@ -335,43 +372,144 @@ def applied_orientation_tags(original_tags: dict[str, Any], compressed: bytes) -
     return [f"-{tag}#={value}" for tag, value in assignments if tag in original_tags]
 
 
-def text_block_tags(original_tags: dict[str, Any]) -> list[str]:
-    """exiftool assignments writing the PNG text blocks to their JPEG tags, applied after the copy.
+def same_text(value: Any, read_back: Any) -> bool:
+    return str(read_back) == str(value)
 
-    Only into tags the PNG doesn't hold. A `Creation Time` is written only from a date in a recognised format, in
-    exiftool's form: given as is, exiftool would read the digits of any text as a date.
+
+def never_moved(final_tags: dict[str, Any]) -> bool:
+    return False
+
+
+def reads_back(
+    target: str, value: Any, same: Callable[[Any, Any], bool] = same_text
+) -> Callable[[dict[str, Any]], bool]:
+    """Whether the final tags hold `value` in `target`, as `same` compares them."""
+    return lambda final_tags: target in final_tags and same(value, final_tags[target])
+
+
+@dataclass(frozen=True)
+class Move:
+    """A PNG tag carried over to its JPEG tag when the PNG is converted, so that photo managers read it.
+
+    `assignment` is the exiftool argument writing the target, applied after the copy; None when the PNG already holds
+    the target, never written over, or when the value can't be written. The tag is shown as moved, an expected loss
+    whose reason names the target, when `moved` finds its value in the final tags: a value exiftool couldn't write
+    whole, or a tag of the PNG holding another value, leaves it an unexpected loss.
     """
-    args = []
+
+    source: str
+    target: str
+    assignment: str | None
+    moved: Callable[[dict[str, Any]], bool]
+
+    @property
+    def reason(self) -> str:
+        return f"{'bloc texte PNG' if self.source in TEXT_BLOCK_TARGETS else 'bloc PNG'} réécrit en {self.target}"
+
+
+def exif_resolution_of(final_tags: dict[str, Any], target: str, pixels_per_metre: int) -> bool:
+    """Whether the EXIF resolution `target`, in its unit, is `pixels_per_metre` rounded to a whole pixel."""
+    value, unit = final_tags.get(target), final_tags.get(EXIF_RESOLUTION_TAGS[2])
+    if not isinstance(value, int | float) or unit not in PIXELS_PER_METRE:
+        return False
+    return abs(value * PIXELS_PER_METRE[unit] - pixels_per_metre) <= PHYS_ROUNDING
+
+
+def jfif_aspect_ratio_of(final_tags: dict[str, Any], x: int, y: int) -> bool:
+    """Whether the JFIF gives the aspect ratio x:y, without unit."""
+    jfif_x, jfif_y, unit = (final_tags.get(tag) for tag in JFIF_RESOLUTION_TAGS)
+    return unit == "None" and isinstance(jfif_x, int) and isinstance(jfif_y, int) and jfif_x * y == jfif_y * x
+
+
+def both_moved(
+    moved_x: Callable[[dict[str, Any]], bool], moved_y: Callable[[dict[str, Any]], bool], final_tags: dict[str, Any]
+) -> bool:
+    return moved_x(final_tags) and moved_y(final_tags)
+
+
+def resolution_moves(original_tags: dict[str, Any], png: bytes) -> list[Move]:
+    """The moves of the PNG's resolution (pHYs), to the EXIF resolution in centimetres or to the JFIF aspect ratio,
+    reduced to fit its 16 bits. A null resolution, an invalid unit or a ratio that doesn't fit is not moved."""
+    phys = png_chunk(png, b"pHYs")
+    if phys is None or len(phys) != 9 or not set(PHYS_TAGS) <= original_tags.keys():
+        return []
+    x, y, unit = struct.unpack(">IIB", phys)
+    if x == 0 or y == 0 or unit not in (PHYS_UNKNOWN, PHYS_METRE):
+        return []
+    if unit == PHYS_METRE:
+        targets = EXIF_RESOLUTION_TAGS
+        values = (x / 100, y / 100, "cm")
+        written = not any(target in original_tags for target in targets)
+        moved_x = partial(exif_resolution_of, target=targets[0], pixels_per_metre=x)
+        moved_y = partial(exif_resolution_of, target=targets[1], pixels_per_metre=y)
+    else:
+        divisor = math.gcd(x, y)
+        targets = JFIF_RESOLUTION_TAGS
+        values = (x // divisor, y // divisor, "None")
+        if max(values[:2]) > JFIF_MAX_DENSITY:
+            return []
+        written = True  # a PNG has no JFIF
+        moved_x = moved_y = partial(jfif_aspect_ratio_of, x=x, y=y)
+    moved = (moved_x, moved_y, partial(both_moved, moved_x, moved_y))
+    return [
+        Move(source, target, f"-{target}={value}" if written else None, check)
+        for source, target, value, check in zip(PHYS_TAGS, targets, values, moved, strict=True)
+    ]
+
+
+def png_moves(original_tags: dict[str, Any], png: bytes) -> list[Move]:
+    """The moves of the PNG's text blocks and chunks that have a JPEG tag.
+
+    A `Creation Time` is written only from a date in a recognised format, in exiftool's form: given as is, exiftool
+    would read the digits of any text as a date.
+    """
+    moves = []
     for block, target in TEXT_BLOCK_TARGETS.items():
-        if block not in original_tags or target in original_tags:
+        if block not in original_tags:
             continue
+        value = original_tags[block]
+        assignment = f"-{target}<{block}"
+        same = same_text
         if block == CREATION_TIME:
-            moment = parse_date(original_tags[block])
-            if moment is not None:
-                args.append(f"-{target}={exif_date(moment)}")
-        else:
-            args.append(f"-{target}<{block}")
+            moment = parse_date(value)
+            assignment = f"-{target}={exif_date(moment)}" if moment is not None else None
+            same = same_moment
+        if target in original_tags:
+            assignment = None
+        moves.append(Move(block, target, assignment, reads_back(target, value, same)))
+    return moves + modify_time_moves(original_tags, png) + resolution_moves(original_tags, png)
+
+
+def modify_time_moves(original_tags: dict[str, Any], png: bytes) -> list[Move]:
+    """The move of the PNG's modification time (tIME), written only from a valid date, read in the chunk itself."""
+    time = png_chunk(png, b"tIME")
+    if time is None or MODIFY_TIME not in original_tags or MODIFY_TIME_OFFSET in original_tags:
+        return []
+    try:
+        value = datetime(*struct.unpack(">HBBBBB", time)).strftime("%Y:%m:%d %H:%M:%S")
+    except (struct.error, ValueError):
+        value = None
+    assignment = f"-{MODIFY_DATE}={value}" if value is not None and MODIFY_DATE not in original_tags else None
+    return [Move(MODIFY_TIME, MODIFY_DATE, assignment, reads_back(MODIFY_DATE, value) if value else never_moved)]
+
+
+def move_arguments(moves: list[Move], original_tags: dict[str, Any]) -> list[str]:
+    """exiftool arguments writing the moves, applied after the copy.
+
+    A modification date written from tIME is given its offset, UTC. Unless the PNG names one, no XMP toolkit is
+    written: exiftool would name itself as the toolkit of the XMP it writes.
+    """
+    args = [move.assignment for move in moves if move.assignment is not None]
+    if any(move.source == MODIFY_TIME and move.assignment is not None for move in moves):
+        args.append(f"-{MODIFY_TIME_OFFSET}=+00:00")
+    if args and XMP_TOOLKIT not in original_tags:
+        args.append(f"-{XMP_TOOLKIT}=")
     return args
 
 
-def rewritten_text_blocks(original_tags: dict[str, Any], final_tags: dict[str, Any]) -> list[ExpectedLoss]:
-    """The losses of the PNG text blocks rewritten to their JPEG tag, each with a reason naming it.
-
-    A block is rewritten when its tag reads back its value (the same moment, for a date). A value exiftool couldn't
-    write whole (a comment too long for a JPEG), or a tag of the PNG holding another value, leaves the block an
-    unexpected loss.
-    """
-    return [
-        ExpectedLoss(block, f"bloc texte PNG réécrit en {target}")
-        for block, target in TEXT_BLOCK_TARGETS.items()
-        if block in original_tags
-        and target in final_tags
-        and (
-            same_moment(original_tags[block], final_tags[target])
-            if block == CREATION_TIME
-            else str(final_tags[target]) == str(original_tags[block])
-        )
-    ]
+def moved_losses(moves: list[Move], final_tags: dict[str, Any]) -> list[ExpectedLoss]:
+    """The expected losses of the tags moved to a JPEG tag that reads back their value."""
+    return [ExpectedLoss(move.source, move.reason) for move in moves if move.moved(final_tags)]
 
 
 def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_args: list[str]):
@@ -436,10 +574,17 @@ def read_original(input_file: str | None, disable_hard_limit: bool, supported_fo
     return Original(path=path, stat=stat, data=data, format=input_format)
 
 
-def check_opaque(png: bytes) -> None:
-    """Refuse a PNG with at least one pixel not fully opaque: JPEG has no transparency, and flattening it onto a
-    background would change the picture. The caller compresses it without --format instead."""
-    if pixel_transparency(png):
+def check_opaque(transparency: bool | None) -> None:
+    """Refuse a PNG with at least one pixel not fully opaque, or whose pixels couldn't be checked: JPEG has no
+    transparency, and flattening it onto a background would change the picture. The caller compresses it without
+    --format instead, which keeps whatever transparency it has."""
+    if transparency is None:
+        raise CommandError(
+            ErrorCode.TRANSPARENT_INPUT,
+            "PNG whose transparency can't be checked: it may have pixels not fully opaque, and JPEG has no "
+            "transparency. Compress it without --format to keep it a PNG.",
+        )
+    if transparency:
         raise CommandError(
             ErrorCode.TRANSPARENT_INPUT,
             "Transparent PNG: at least one pixel is not fully opaque, and JPEG has no transparency. "
@@ -447,11 +592,28 @@ def check_opaque(png: bytes) -> None:
         )
 
 
-# The PNG colour types of grey pixels, without and with alpha (opaque, else refused), read in the IHDR chunk, after the
-# signature (8 bytes), the chunk's length and type (8), the width and height (8) and the bit depth (1). Pillow's mode
-# doesn't tell them: it opens a 16-bit grey and alpha PNG as RGBA.
+# The PNG colour types of grey pixels, without and with alpha (opaque, else refused), read in the IHDR chunk. Pillow's
+# mode doesn't tell them: it opens a 16-bit grey and alpha PNG as RGBA.
 GRAY_COLOUR_TYPES = (0, 4)
-COLOUR_TYPE_OFFSET = 25
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def png_chunk(png: bytes, kind: bytes) -> bytes | None:
+    """The data of the PNG's first chunk of type `kind` before its pixels, or None."""
+    offset = len(PNG_SIGNATURE)
+    while offset + 8 <= len(png):
+        length, chunk_kind = struct.unpack(">I4s", png[offset : offset + 8])
+        if chunk_kind == kind:
+            return png[offset + 8 : offset + 8 + length]
+        if chunk_kind == b"IDAT":
+            return None
+        offset += 8 + length + 4  # length and type, data, CRC
+    return None
+
+
+def conversion_losses(png: bytes) -> list[ExpectedLoss]:
+    """The expected losses of converting this PNG to JPEG."""
+    return CONVERTED_LOSSES + ([SRGB_GAMMA_LOSS] if png_chunk(png, b"gAMA") == SRGB_GAMMA_CHUNK else [])
 
 
 def jpeg_pixels(image: Image.Image, gray: bool) -> Image.Image:
@@ -467,7 +629,7 @@ def convert_to_jpeg(png: bytes) -> bytes:
     with Image.open(io.BytesIO(png)) as image:
         icc_profile = image.info.get("icc_profile")
         buf = io.BytesIO()
-        jpeg_pixels(image, png[COLOUR_TYPE_OFFSET] in GRAY_COLOUR_TYPES).save(
+        jpeg_pixels(image, png[PNG_COLOUR_TYPE_OFFSET] in GRAY_COLOUR_TYPES).save(
             buf, format="JPEG", quality=JPEG_QUALITY, subsampling=JPEG_SUBSAMPLING, icc_profile=icc_profile
         )
     return buf.getvalue()
@@ -561,8 +723,10 @@ def compress_image(
     # The bytes Tinify compresses, kept apart from the original, which stays the source of the metadata copy, the diff
     # and the comparisons: the original's own bytes, or a PNG converted to JPEG.
     converted = output_format == "jpeg" and original.format == "png"
+    # Read before Tinify: it may need ffmpeg, whose absence must not show only once the credit is spent
+    original_transparency = pixel_transparency(original.data)
     if converted:
-        check_opaque(original.data)
+        check_opaque(original_transparency)
     tinify_input = convert_to_jpeg(original.data) if converted else original.data
 
     with file_on_disk(original.path, original.data, f".{original.format}") as exiftool_source:
@@ -586,8 +750,8 @@ def compress_image(
         # None without a motion photo: there is no video to keep
         video_kept = (appended_buffer is not None) if motion_photo["detected"] else None
         motion_photo_exclusions = []
-        conversion_losses = CONVERTED_LOSSES if converted else []
-        expected_losses = conversion_losses + EXPECTED_LOSSES
+        converted_losses = conversion_losses(original.data) if converted else []
+        expected_losses = converted_losses + EXPECTED_LOSSES
         if video_kept is False:
             motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS
             # Past the check, without a zone, the loss was allowed. A zone that couldn't be appended is unexpected.
@@ -601,7 +765,8 @@ def compress_image(
         if pixels_turned:
             expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
 
-        text_block_args = text_block_tags(original_tags) if converted else []
+        moves = png_moves(original_tags, original.data) if converted else []
+        move_args = move_arguments(moves, original_tags)
 
         # Only a profile can have converted the colours; with --metadata strip, no profile is copied back
         colors_args = []
@@ -628,11 +793,14 @@ def compress_image(
                     exiftool,
                     exiftool_source,
                     compressed_path,
-                    motion_photo_exclusions + orientation_args + colors_args + text_block_args,
+                    motion_photo_exclusions + orientation_args + colors_args + move_args,
                 )
             final_buffer = compressed_path.read_bytes()
             final_tags = read_metadata(exiftool, compressed_path)
-            final_transparency = pixel_transparency(compressed_path)
+            try:
+                final_transparency = pixel_transparency(compressed_path)
+            except CommandError:  # ffmpeg missing: past Tinify, the transparency is left unverified, not an error
+                final_transparency = None
             same_picture = same_displayed_picture(exiftool_source, compressed_path) if oriented else None
             colors_kept = same_colors(exiftool_source, compressed_path) if same_picture is not False else None
             if original.stat is not None:
@@ -640,7 +808,6 @@ def compress_image(
             return final_buffer, final_tags, final_transparency, same_picture, colors_kept
 
         output_buffer = appended_buffer if appended_buffer is not None else compressed_buffer
-        original_transparency = pixel_transparency(exiftool_source)
         if output_path is not None:
             final_buffer, final_tags, final_transparency, same_picture, colors_kept = write_atomically(
                 output_path,
@@ -659,11 +826,11 @@ def compress_image(
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
     input_mtime = iso_mtime(original.stat) if original.stat is not None else None
     if converted and metadata == "keep":
-        expected_losses = rewritten_text_blocks(original_tags, final_tags) + expected_losses
+        expected_losses = moved_losses(moves, final_tags) + expected_losses
     metadata_diff = diff_metadata(
         original_tags,
         final_tags,
-        expected_losses if metadata == "keep" else [*conversion_losses, ExpectedLoss("*", STRIP_REASON)],
+        expected_losses if metadata == "keep" else [*converted_losses, ExpectedLoss("*", STRIP_REASON)],
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
         same_picture=same_picture,

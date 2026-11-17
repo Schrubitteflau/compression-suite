@@ -18,6 +18,8 @@
   has a standard equivalent in a JPEG (`Title`, `Description` as international text, `Author`, `Copyright`,
   `Comment`, `Software`, `Creation Time`, its only date), an unknown keyword (`Mood`) and an international text
   without equivalent (`Disclaimer`, in French).
+- `typical_chunks.png`: the picture of `text_blocks.png` with the ancillary chunks of a typical opaque PNG and no
+  other metadata: `sRGB`, the `gAMA` of sRGB (0.45455), `pHYs` (3780 pixels per metre), `bKGD` and `tIME`.
 
 Run from the repo root: `uv run python src/compression_suite/compress_image/samples/make_png_samples.py`
 """
@@ -100,13 +102,14 @@ def gray16() -> Image.Image:
     return image
 
 
+def chunk(kind: bytes, data: bytes) -> bytes:
+    """A PNG chunk: its length, type, data and CRC."""
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
 def png_by_hand(colour_type: int, samples: list[tuple[int, ...]], chunks: list[tuple[bytes, bytes]]) -> bytes:
     """A 16-bit PNG of the gradient, `samples[x]` the 16-bit samples of column `x`, with `chunks` before its pixels,
     written by hand: Pillow can't write a 16-bit PNG with colour."""
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-
     row = b"".join(struct.pack(f">{len(sample)}H", *sample) for sample in samples)
     pixels = b"".join(b"\0" + row for _ in range(GRADIENT_HEIGHT))  # filter type 0 on each row
     header = struct.pack(">IIBBBBB", GRADIENT_WIDTH, GRADIENT_HEIGHT, 16, colour_type, 0, 0, 0)
@@ -185,6 +188,25 @@ def text_blocks() -> PngImagePlugin.PngInfo:
     return info
 
 
+# The ancillary chunks of a typical opaque PNG, which Pillow can't all write: sRGB (perceptual intent), the gAMA an
+# sRGB PNG declares (0.45455), pHYs (3780 pixels per metre, 96 dpi), bKGD (white) and tIME (a UTC date)
+TYPICAL_CHUNKS = [
+    (b"sRGB", bytes((0,))),
+    (b"gAMA", struct.pack(">I", 45455)),
+    (b"pHYs", struct.pack(">IIB", 3780, 3780, 1)),
+    (b"bKGD", struct.pack(">3H", 255, 255, 255)),
+    (b"tIME", struct.pack(">HBBBBB", 2025, 3, 4, 9, 20, 30)),
+]
+
+# End of the IHDR chunk: the signature (8 bytes), then the chunk's length and type (8), data (13) and CRC (4)
+IHDR_END = 8 + 8 + 13 + 4
+
+
+def with_chunks(png: bytes, chunks: list[tuple[bytes, bytes]]) -> bytes:
+    """`png` with `chunks` inserted right after its IHDR chunk."""
+    return png[:IHDR_END] + b"".join(chunk(kind, data) for kind, data in chunks) + png[IHDR_END:]
+
+
 def main() -> None:
     """Write the samples."""
     info = PngImagePlugin.PngInfo()
@@ -210,6 +232,9 @@ def main() -> None:
     picture(random.Random(SEED)).resize((WIDTH // 4, HEIGHT // 4)).save(
         SAMPLES / "text_blocks.png", pnginfo=text_blocks()
     )
+    small = io.BytesIO()
+    picture(random.Random(SEED)).resize((WIDTH // 4, HEIGHT // 4)).save(small, format="PNG")
+    (SAMPLES / "typical_chunks.png").write_bytes(with_chunks(small.getvalue(), TYPICAL_CHUNKS))
 
 
 if __name__ == "__main__":

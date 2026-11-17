@@ -7,6 +7,8 @@ Tinify echoing its input, the written file is the JPEG converted locally, with t
 import io
 import json
 import os
+import struct
+import zlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +17,7 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from compression_suite.cli import app
+from compression_suite.utils.pinned_tools import expected_executable, install_dir, load_manifest, tools_dir
 
 runner = CliRunner()
 
@@ -232,6 +235,123 @@ def test_a_png_with_one_transparent_pixel_is_refused_before_tinify(tmp_path: Pat
     assert _error(result)["code"] == "transparent_input"
     assert not fake.from_buffer.called
     assert list(out_dir.iterdir()) == []
+
+
+GRAY, RGB = 0, 2  # PNG colour types
+
+
+def _png16_with_key(path: Path, colour_type: int, sample: tuple[int, ...], key: tuple[int, ...]) -> Path:
+    """Write a 16-bit PNG whose every pixel holds `sample`, with a tRNS colour key `key`, by hand: Pillow can't write
+    a 16-bit RGB PNG."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    width, height = 64, 48
+    row = b"\0" + struct.pack(f">{len(sample)}H", *sample) * width  # filter type 0
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 16, colour_type, 0, 0, 0))
+        + chunk(b"tRNS", struct.pack(f">{len(key)}H", *key))
+        + chunk(b"IDAT", zlib.compress(row * height))
+        + chunk(b"IEND", b"")
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("colour_type", "sample"),
+    [(GRAY, (30000,)), (RGB, (1000, 2000, 3000))],
+    ids=["gray16", "rgb16"],
+)
+def test_a_16_bit_png_whose_colour_key_matches_its_pixels_is_refused_before_tinify(
+    tmp_path: Path, colour_type: int, sample: tuple[int, ...]
+):
+    src = _png16_with_key(tmp_path / "in.png", colour_type, sample, key=sample)
+    with _echo_tinify() as fake:
+        result = _invoke(str(src), "--format", "jpeg", "--output", str(tmp_path / "out.jpg"), "--json")
+    assert result.exit_code == 28, result.output
+    assert _error(result)["code"] == "transparent_input"
+    assert not fake.from_buffer.called
+
+
+@pytest.mark.parametrize(
+    ("colour_type", "sample", "key"),
+    [
+        (GRAY, (30000,), (30001,)),
+        # Same 8-bit pixels: the key differs only in the high byte of red, which Pillow's 8-bit reading drops
+        (RGB, (0x0A0A, 0x1414, 0x8080), (0x0B0A, 0x1414, 0x8080)),
+    ],
+    ids=["gray16", "rgb16"],
+)
+def test_a_16_bit_png_whose_colour_key_matches_no_pixel_is_converted(
+    tmp_path: Path, colour_type: int, sample: tuple[int, ...], key: tuple[int, ...]
+):
+    src = _png16_with_key(tmp_path / "in.png", colour_type, sample, key)
+    metadata = _convert(tmp_path, src=src)["result"]["metadata"]
+    [transparency] = [field for field in metadata["important"] if field["key"] == "transparency"]
+    assert (transparency["before"], transparency["status"]) == (False, "same")
+
+
+def _tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ffmpeg: str | None, version: str = "") -> None:
+    """Use a tools folder holding the real exiftool and, given its script, an ffmpeg of the pinned version, which runs
+    `version` before giving it."""
+    exiftool, ffmpeg_tool = load_manifest()["exiftool"], load_manifest()["ffmpeg"]
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    real_exiftool = install_dir(exiftool, tools_dir())
+    (tools / real_exiftool.name).symlink_to(real_exiftool)
+    if ffmpeg is not None:
+        executable = tools / install_dir(ffmpeg_tool, tools_dir()).name / ffmpeg_tool.executable
+        executable.parent.mkdir(parents=True)
+        executable.write_text(
+            f'#!/bin/sh\nif [ "$1" = -version ]; then\n{version}\n'
+            f'echo "ffmpeg version {ffmpeg_tool.version}"\nexit 0\nfi\n{ffmpeg}\n'
+        )
+        executable.chmod(0o755)
+    monkeypatch.setenv("COMPRESSION_SUITE_TOOLS_DIR", str(tools))
+
+
+def test_a_png_whose_transparency_ffmpeg_can_t_tell_is_refused_before_tinify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    src = _png16_with_key(tmp_path / "in.png", RGB, (1000, 2000, 3000), key=(1000, 2000, 3000))
+    _tools(tmp_path, monkeypatch, ffmpeg="echo boom >&2; exit 1")
+    with _echo_tinify() as fake:
+        result = _invoke(str(src), "--format", "jpeg", "--output", str(tmp_path / "out.jpg"), "--json")
+    assert result.exit_code == 28, result.output
+    assert _error(result)["code"] == "transparent_input"
+    assert not fake.from_buffer.called
+
+
+def test_without_format_a_missing_ffmpeg_fails_before_tinify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    src = _png16_with_key(tmp_path / "in.png", RGB, (1000, 2000, 3000), key=(1000, 2000, 3000))
+    _tools(tmp_path, monkeypatch, ffmpeg=None)
+    with _echo_tinify() as fake:
+        result = _invoke(str(src), "--output", str(tmp_path / "out.png"), "--json")
+    assert result.exit_code == 30, result.output
+    assert _error(result)["details"]["tool"] == "ffmpeg"
+    assert not fake.from_buffer.called
+
+
+def test_an_output_whose_transparency_can_t_be_read_after_tinify_is_unverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    real_ffmpeg = expected_executable(load_manifest()["ffmpeg"])
+    checked = tmp_path / "version-checked"
+    # The real ffmpeg, whose version check passes for the original and fails for the output, as if it went missing
+    _tools(
+        tmp_path,
+        monkeypatch,
+        ffmpeg=f'exec "{real_ffmpeg}" "$@"',
+        version=f'[ -e "{checked}" ] && exit 1; touch "{checked}"',
+    )
+    src = _png16_with_key(tmp_path / "in.png", RGB, (1000, 2000, 3000), key=(1000, 2000, 3000))
+    with _echo_tinify():
+        result = _invoke(str(src), "--output", str(tmp_path / "out.png"), "--json")
+    assert result.exit_code == 0, result.output
+    important = {field["key"]: field for field in json.loads(result.stdout)["result"]["metadata"]["important"]}
+    assert (important["transparency"]["before"], important["transparency"]["status"]) == (True, "unverified")
 
 
 def test_a_rgba_png_whose_pixels_are_all_opaque_becomes_an_rgb_jpeg(tmp_path: Path):

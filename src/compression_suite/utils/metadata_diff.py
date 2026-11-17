@@ -10,6 +10,7 @@ a video's, and its diff, are in utils.video_metadata, on top of `classify_losses
 
 import io
 import json
+import struct
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,11 +18,13 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.dates import same_moment
 from compression_suite.utils.orientation import ORIENTATION_TAGS, displayed_size, orientation
+from compression_suite.utils.pinned_tools import resolve_tool
 
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
@@ -178,14 +181,54 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
 
 
 def pixel_transparency(source: Path | bytes) -> bool | None:
-    """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it."""
+    """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it.
+
+    An alpha channel is read on 8 bits, as Pillow decodes it. A colour key (a PNG's tRNS chunk) makes transparent the
+    pixels that hold it, and only them.
+    """
     try:
         with Image.open(source if isinstance(source, Path) else io.BytesIO(source)) as image:
             if image.mode not in ("RGBA", "LA", "PA", "La", "RGBa") and "transparency" not in image.info:
                 return False
+            if image.format == "PNG" and "transparency" in image.info:
+                data = source.read_bytes() if isinstance(source, Path) else source
+                if data[PNG_BIT_DEPTH_OFFSET] == 16 and data[PNG_COLOUR_TYPE_OFFSET] in FFMPEG_SIXTEEN_BIT_FORMATS:
+                    return _sixteen_bit_key_matched(data, image.info["transparency"])
             return image.convert("RGBA").getchannel("A").getextrema()[0] < 255
     except (OSError, ValueError, Image.DecompressionBombError):
         return None
+
+
+# The bit depth and colour type of a PNG, read in its IHDR chunk after the signature (8 bytes), the chunk's length and
+# type (8), the width and height (8).
+PNG_BIT_DEPTH_OFFSET = 24
+PNG_COLOUR_TYPE_OFFSET = 25
+
+# The 16-bit samples ffmpeg decodes a PNG of each colour type with a colour key to, big-endian like the key: grey, RGB
+FFMPEG_SIXTEEN_BIT_FORMATS = {0: "gray16be", 2: "rgb48be"}
+
+
+def _sixteen_bit_key_matched(png: bytes, key: int | tuple[int, ...]) -> bool | None:
+    """Whether a pixel of the 16-bit PNG holds its colour key, or None if ffmpeg can't decode it.
+
+    Pillow can't tell: it reads 16-bit RGB on 8 bits while keeping the 16-bit key, and ignores the key of 16-bit grey.
+    ffmpeg decodes the samples on 16 bits, compared here to the key: its own handling of the key is wrong for grey.
+    """
+    samples = (key,) if isinstance(key, int) else key
+    key_bytes = struct.pack(f">{len(samples)}H", *samples)
+    result = subprocess.run(
+        [
+            str(resolve_tool("ffmpeg")),
+            *("-v", "error", "-nostdin", "-f", "png_pipe", "-i", "pipe:0"),
+            *("-pix_fmt", FFMPEG_SIXTEEN_BIT_FORMATS[png[PNG_COLOUR_TYPE_OFFSET]], "-f", "rawvideo", "pipe:1"),
+        ],
+        input=png,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    pixels = np.frombuffer(result.stdout, dtype=f"V{len(key_bytes)}")
+    return bool((pixels == np.void(key_bytes)).any())
 
 
 def _transparency_field(transparency: tuple[bool | None, bool | None]) -> dict[str, Any]:

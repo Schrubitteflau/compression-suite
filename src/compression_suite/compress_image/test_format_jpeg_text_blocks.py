@@ -74,6 +74,10 @@ def test_each_mapped_text_block_is_an_expected_loss_naming_its_added_target(tmp_
         assert added[target] == value
 
 
+def test_exiftool_does_not_stamp_the_xmp_it_writes(tmp_path: Path):
+    assert "XMP-x:XMPToolkit" not in _convert(tmp_path)["after"]
+
+
 def test_text_blocks_without_equivalent_are_the_only_unexpected_losses(tmp_path: Path):
     unexpected = _convert(tmp_path)["unexpected_losses"]
     assert {(loss["tag"], loss["kind"], loss["before"]) for loss in unexpected} == {
