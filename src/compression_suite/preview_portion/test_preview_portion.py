@@ -1,6 +1,7 @@
 """CLI tests for preview-portion: the pinned ffmpeg and ffprobe run for real, on videos fabricated at test time from
 the pattern of the video samples (`five_seconds`: laid out like a Galaxy S23 portrait video, 5 s long)."""
 
+import contextlib
 import json
 import os
 import shutil
@@ -429,25 +430,43 @@ def _children(pid: int) -> list[int]:
     return children
 
 
-def _wait_for_encoder(pid: int, encoder: str) -> int:
-    """Wait until a process runs an ffmpeg with this encoder, and return its pid."""
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        for child in _children(pid):
+def _wait_for_encoder(process: subprocess.Popen, encoder: str) -> int:
+    """Wait until the command runs an ffmpeg with this encoder that has started writing its output, and return its
+    pid.
+
+    Bounded by the command's life, not by a clock: the rendering starts only once the portion is encoded, which takes
+    a minute or more on a loaded machine. The output, `/dev/fd/<n>` last on the command line, is an anonymous file
+    that shows its size through /proc."""
+    while process.poll() is None:
+        for child in _children(process.pid):
             try:
-                if encoder in Path(f"/proc/{child}/cmdline").read_text():
+                command = Path(f"/proc/{child}/cmdline").read_text().split("\0")
+                if encoder in command and os.stat(f"/proc/{child}/fd/{command[-2].removeprefix('/dev/fd/')}").st_size:
                     return child
             except GONE:
                 continue
         time.sleep(0.01)
-    raise AssertionError(f"no ffmpeg running {encoder}")
+    raise AssertionError(f"no ffmpeg ran {encoder}: the command ended with code {process.returncode}")
+
+
+def _state(pid: int) -> str:
+    """A process's state letter in /proc (`R`, `S`, `T` when stopped, `Z` when ended), `X` once reaped."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0]
+    except GONE:
+        return "X"
 
 
 def _is_running(pid: int) -> bool:
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] != "Z"
-    except GONE:
-        return False
+    return _state(pid) not in ("Z", "X")
+
+
+def _freeze(pid: int) -> None:
+    """Stop a process and wait until it is stopped: from then on it can't end on its own."""
+    os.kill(pid, signal.SIGSTOP)
+    while (state := _state(pid)) not in ("T", "Z", "X"):
+        time.sleep(0.001)
+    assert state == "T"  # it hadn't ended before the stop
 
 
 @pytest.mark.parametrize(
@@ -473,10 +492,13 @@ def test_interrupted_portion_leaves_nothing(tmp_path, long_hevc, sig, encoder):
         text=True,
         env={**os.environ, "TMPDIR": str(temporary)},
     )
-    ffmpeg = _wait_for_encoder(process.pid, encoder)
-    time.sleep(0.1)  # let it write (the rendering, the shorter stage, lasts about 0.6 s)
-    assert _is_running(ffmpeg)  # the signal lands in the targeted stage, not in the next one or after the end
+    ffmpeg = _wait_for_encoder(process, encoder)
+    # Frozen, the stage can't end before the signal lands in it, however fast it runs: the command's SIGKILL, or the
+    # kernel's on its death, reaches a stopped ffmpeg. It resumes right after, as an ffmpeg still running would.
+    _freeze(ffmpeg)
     process.send_signal(sig)
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(ffmpeg, signal.SIGCONT)
     stdout, _ = process.communicate(timeout=60)
 
     if sig is signal.SIGKILL:
