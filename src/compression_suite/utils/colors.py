@@ -24,22 +24,36 @@ SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
 COMPARED_SIZE = (32, 32)
 SAME_COLORS_MAX_DIFFERENCE = 1.5
 
-# Modes an ICC profile can describe as they are; any other (palette, alpha, 16-bit grey) is flattened on white first,
-# to RGB or to grey (L) as its base mode, which a grey profile still describes.
+# Modes an ICC profile can describe as they are; 16-bit grey is scaled to 8 bits (L), any other (palette, alpha) is
+# flattened on white first, to RGB or to grey (L) as its base mode, which a grey profile still describes.
 PROFILED_MODES = ("RGB", "L", "CMYK")
+
+# Pillow's modes of 16-bit grey pixels
+SIXTEEN_BIT_GRAY_MODES = ("I", "I;16", "I;16B", "I;16L")
+
+
+def eight_bit_gray(image: Image.Image) -> Image.Image:
+    """16-bit grey pixels on 8 bits (L), each level scaled and rounded: Pillow's own conversion clips every level
+    above 255 to white."""
+    return image.convert("I").point(lambda level: level * (1 / 257) + 0.5).convert("L")
 
 
 def _open(source: Path | bytes) -> Image.Image:
     return Image.open(source if isinstance(source, Path) else io.BytesIO(source))
 
 
-def has_icc_profile(source: Path | bytes) -> bool:
-    """Whether the image carries an ICC profile, read without decoding the pixels; False if Pillow can't open it."""
+def _icc_profile(source: Path | bytes) -> bytes | None:
+    """The image's ICC profile, read without decoding the pixels; None without one or if Pillow can't open it."""
     try:
         with _open(source) as image:
-            return bool(image.info.get("icc_profile"))
+            return image.info.get("icc_profile") or None
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
-        return False
+        return None
+
+
+def has_icc_profile(source: Path | bytes) -> bool:
+    """Whether the image carries an ICC profile, read without decoding the pixels; False if Pillow can't open it."""
+    return _icc_profile(source) is not None
 
 
 def _srgb_copy(source: Path | bytes, use_profile: bool) -> tuple[Image.Image, float] | None:
@@ -53,6 +67,8 @@ def _srgb_copy(source: Path | bytes, use_profile: bool) -> tuple[Image.Image, fl
             icc_profile = image.info.get("icc_profile") if use_profile else None
             image.draft("RGB", (COMPARED_SIZE[0] * 8, COMPARED_SIZE[1] * 8))
             pixels = ImageOps.exif_transpose(image)
+            if pixels.mode in SIXTEEN_BIT_GRAY_MODES:
+                pixels = eight_bit_gray(pixels)
             if pixels.mode not in PROFILED_MODES:
                 pixels = Image.alpha_composite(Image.new("RGBA", pixels.size, "white"), pixels.convert("RGBA"))
                 pixels = pixels.convert(Image.getmodebase(image.mode))
@@ -80,8 +96,12 @@ def colors_converted(original: Path, compressed: bytes) -> bool:
     as sRGB. Tinify converted every P3 image of the real calls: a photo of dull colours, whose P3 and sRGB readings are
     close, is converted too. A profile that converts nothing (sRGB) may then be dropped, which changes no colour. False
     when they can't be compared, or either can't be decoded: the original's profile is copied back, as any other tag,
-    and colours displayed otherwise are caught by same_colors.
+    and colours displayed otherwise are caught by same_colors. False too when the compressed image still carries the
+    original's profile: nothing converted the pixels away from it (a PNG converted to JPEG locally, the profile
+    attached, which Tinify returned as is).
     """
+    if _icc_profile(compressed) == _icc_profile(original) is not None:
+        return False
     converted, raw = _srgb_copy(original, use_profile=True), _srgb_copy(original, use_profile=False)
     compressed_copy = _srgb_copy(compressed, use_profile=True)
     if converted is None or raw is None or compressed_copy is None:

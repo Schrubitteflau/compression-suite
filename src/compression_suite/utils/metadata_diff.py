@@ -8,7 +8,9 @@ The module is generic: a command passes its own expected losses. The important f
 a video's, and its diff, are in utils.video_metadata, on top of `classify_losses`.
 """
 
+import io
 import json
+import struct
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,10 +18,13 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.dates import same_moment
 from compression_suite.utils.orientation import ORIENTATION_TAGS, displayed_size, orientation
+from compression_suite.utils.pinned_tools import resolve_tool
 
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
 IGNORED_GROUPS = ("System", "Composite", "ExifTool")
@@ -33,6 +38,8 @@ FILE_GROUP_COMPARED_TAGS = ("File:ImageWidth", "File:ImageHeight", "File:Comment
 # Groups carrying the image dimensions, by format. They are compared as displayed (orientation applied): a change of
 # the displayed dimensions is never expected, whatever the command declares (even `--metadata strip`), the image must
 # keep its size. Stored dimensions swapped with the pixels by a quarter turn, the displayed ones kept, are expected.
+# Those of a group the output has no longer (a PNG converted to JPEG), the displayed ones kept, are lost as the command
+# declares them.
 DIMENSION_GROUPS = ("File", "PNG", "RIFF")
 DIMENSION_TAGS = tuple(f"{group}:{name}" for group in DIMENSION_GROUPS for name in ("ImageWidth", "ImageHeight"))
 ROTATED_DIMENSIONS_REASON = "pixels pivotés selon l'orientation : l'image affichée garde ses dimensions"
@@ -88,13 +95,16 @@ Candidate = str | dict[str, str]
 class ImportantField:
     """A field always shown first, read from the first candidate present.
 
-    A `displayed` field is a `{width, height}` given as displayed, swapped when the orientation turns the image.
+    A `displayed` field is a `{width, height}` given as displayed, swapped when the orientation turns the image. A
+    `date` field is the same when both values give the same moment, whatever their format (a PNG `Creation Time` in
+    ISO 8601, rewritten to XMP in exiftool's form).
     """
 
     key: str
     candidates: tuple[Candidate, ...]
     mtime_fallback: bool = False
     displayed: bool = False
+    date: bool = False
 
 
 DIMENSIONS_FIELD = ImportantField(
@@ -114,6 +124,7 @@ IMPORTANT_FIELDS = (
             "PNG:CreationTime",
         ),
         mtime_fallback=True,
+        date=True,
     ),
     ImportantField(
         "gps",
@@ -169,15 +180,55 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     }
 
 
-def pixel_transparency(path: Path) -> bool | None:
-    """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it."""
+def pixel_transparency(source: Path | bytes) -> bool | None:
+    """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it.
+
+    An alpha channel is read on 8 bits, as Pillow decodes it. A colour key (a PNG's tRNS chunk) makes transparent the
+    pixels that hold it, and only them.
+    """
     try:
-        with Image.open(path) as image:
+        with Image.open(source if isinstance(source, Path) else io.BytesIO(source)) as image:
             if image.mode not in ("RGBA", "LA", "PA", "La", "RGBa") and "transparency" not in image.info:
                 return False
+            if image.format == "PNG" and "transparency" in image.info:
+                data = source.read_bytes() if isinstance(source, Path) else source
+                if data[PNG_BIT_DEPTH_OFFSET] == 16 and data[PNG_COLOUR_TYPE_OFFSET] in FFMPEG_SIXTEEN_BIT_FORMATS:
+                    return _sixteen_bit_key_matched(data, image.info["transparency"])
             return image.convert("RGBA").getchannel("A").getextrema()[0] < 255
     except (OSError, ValueError, Image.DecompressionBombError):
         return None
+
+
+# The bit depth and colour type of a PNG, read in its IHDR chunk after the signature (8 bytes), the chunk's length and
+# type (8), the width and height (8).
+PNG_BIT_DEPTH_OFFSET = 24
+PNG_COLOUR_TYPE_OFFSET = 25
+
+# The 16-bit samples ffmpeg decodes a PNG of each colour type with a colour key to, big-endian like the key: grey, RGB
+FFMPEG_SIXTEEN_BIT_FORMATS = {0: "gray16be", 2: "rgb48be"}
+
+
+def _sixteen_bit_key_matched(png: bytes, key: int | tuple[int, ...]) -> bool | None:
+    """Whether a pixel of the 16-bit PNG holds its colour key, or None if ffmpeg can't decode it.
+
+    Pillow can't tell: it reads 16-bit RGB on 8 bits while keeping the 16-bit key, and ignores the key of 16-bit grey.
+    ffmpeg decodes the samples on 16 bits, compared here to the key: its own handling of the key is wrong for grey.
+    """
+    samples = (key,) if isinstance(key, int) else key
+    key_bytes = struct.pack(f">{len(samples)}H", *samples)
+    result = subprocess.run(
+        [
+            str(resolve_tool("ffmpeg")),
+            *("-v", "error", "-nostdin", "-f", "png_pipe", "-i", "pipe:0"),
+            *("-pix_fmt", FFMPEG_SIXTEEN_BIT_FORMATS[png[PNG_COLOUR_TYPE_OFFSET]], "-f", "rawvideo", "pipe:1"),
+        ],
+        input=png,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    pixels = np.frombuffer(result.stdout, dtype=f"V{len(key_bytes)}")
+    return bool((pixels == np.void(key_bytes)).any())
 
 
 def _transparency_field(transparency: tuple[bool | None, bool | None]) -> dict[str, Any]:
@@ -281,7 +332,9 @@ def _important_fields(
                 "before": before_value,
                 "after": after_value,
                 "source": source,
-                "status": field_status(before_value, after_value),
+                "status": "same"
+                if field.date and same_moment(before_value, after_value)
+                else field_status(before_value, after_value),
             }
         )
     fields.append(_transparency_field(transparency))
@@ -304,22 +357,36 @@ def _swapped_dimension_tags(before: dict[str, Any], after: dict[str, Any]) -> se
     return swapped
 
 
-def _never_expected_tags(transparency: tuple[bool | None, bool | None], swapped_dimensions: set[str]) -> set[str]:
-    """Tags whose loss is unexpected whatever the command declares: the dimensions unless swapped with the pixels, and
-    the alpha tags unless the original is known to be opaque or the output known to be transparent."""
-    never_expected = set(DIMENSION_TAGS) - swapped_dimensions
+def _converted_dimension_tags(before: dict[str, Any], after: dict[str, Any]) -> set[str]:
+    """The dimension tags of the groups the output has no longer, the displayed dimensions kept: the image was
+    converted to another format, without changing its size as displayed."""
+    if _field_value(DIMENSIONS_FIELD, before)[0] != _field_value(DIMENSIONS_FIELD, after)[0]:
+        return set()
+    after_groups = {tag.split(":", 1)[0] for tag in after}
+    return {tag for tag in DIMENSION_TAGS if tag in before and tag.split(":", 1)[0] not in after_groups}
+
+
+def _never_expected_tags(
+    transparency: tuple[bool | None, bool | None], swapped_dimensions: set[str], converted_dimensions: set[str]
+) -> set[str]:
+    """Tags whose loss is unexpected whatever the command declares: the dimensions unless swapped with the pixels or
+    gone with their format, and the alpha tags unless the original is known to be opaque or the output known to be
+    transparent."""
+    never_expected = set(DIMENSION_TAGS) - swapped_dimensions - converted_dimensions
     before, after = transparency
     if before is not False and after is not True:
         never_expected.update(ALPHA_TAGS)
     return never_expected
 
 
-def _expected_reason(tag: str, expected_losses: list[ExpectedLoss], never_expected: set[str]) -> str | None:
-    """The reason of a loss: that of dimensions swapped with the pixels (the only dimension tags not never expected),
-    of the first expected loss matching the tag, the `File` group's, or None if the loss is unexpected."""
+def _expected_reason(
+    tag: str, expected_losses: list[ExpectedLoss], never_expected: set[str], swapped_dimensions: set[str]
+) -> str | None:
+    """The reason of a loss: that of dimensions swapped with the pixels, of the first expected loss matching the tag,
+    the `File` group's, or None if the loss is unexpected."""
     if tag in never_expected:
         return None
-    if tag in DIMENSION_TAGS:
+    if tag in swapped_dimensions:
         return ROTATED_DIMENSIONS_REASON
     for loss in expected_losses:
         if fnmatchcase(tag, loss.pattern):
@@ -346,9 +413,10 @@ def diff_metadata(
     (`same_displayed_picture`), None when it wasn't checked. `same_colors` tells whether it displays it with the same
     colours (`same_colors`), None when it wasn't checked.
     """
-    never_expected = _never_expected_tags(transparency, _swapped_dimension_tags(before, after))
+    swapped_dimensions = _swapped_dimension_tags(before, after)
+    never_expected = _never_expected_tags(transparency, swapped_dimensions, _converted_dimension_tags(before, after))
     unexpected, expected = classify_losses(
-        before, after, lambda tag: _expected_reason(tag, expected_losses, never_expected)
+        before, after, lambda tag: _expected_reason(tag, expected_losses, never_expected, swapped_dimensions)
     )
     transparency_loss = _transparency_loss(transparency)
     if transparency_loss is not None:

@@ -39,7 +39,7 @@ Each runs with `--json`. The options listed are the ones the caller passes; `--h
 |---|---|---|
 | `inspect FILE` | none | [`inspect_file/`](../src/compression_suite/inspect_file/) |
 | `preview FILE` | `-o`, `--overwrite` | [`preview/`](../src/compression_suite/preview/) |
-| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss` | [`compress_image/`](../src/compression_suite/compress_image/) |
+| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss`, `--format jpeg` | [`compress_image/`](../src/compression_suite/compress_image/) |
 | `video-presets` | none | [`utils/video_presets.py`](../src/compression_suite/utils/video_presets.py) |
 | `display-copy VIDEO` | `--output`, `--overwrite` | [`display_copy/`](../src/compression_suite/display_copy/) |
 | `preview-portion VIDEO` | `--preset`, `--crf`, `--start`, `--duration`, `--output` | [`preview_portion/`](../src/compression_suite/preview_portion/) |
@@ -47,6 +47,7 @@ Each runs with `--json`. The options listed are the ones the caller passes; `--h
 | `doctor` | none | [`doctor/`](../src/compression_suite/doctor/) |
 
 Error codes the caller branches on, beyond showing `message`: `input_not_found`, `input_unreadable`,
-`input_corrupt`, `motion_photo`, `tool_missing` (it shows `details.install_command`), `api_key_missing`, and
+`input_corrupt`, `motion_photo`, `transparent_input` (from `compress-image --format jpeg`: the caller compresses the
+same file without `--format`), `tool_missing` (it shows `details.install_command`), `api_key_missing`, and
 `usage_error` from `preview-portion` with `details.start` (a start past the video's end). Changing the meaning of
 one of these, or of the `details` keys named, is an incompatible change.

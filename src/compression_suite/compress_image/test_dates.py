@@ -38,7 +38,6 @@ def _fake_tinify():
         source.to_buffer.return_value = data
         return source
 
-    mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
     mock.from_buffer.side_effect = make_source
     return patch("compression_suite.compress_image.main.tinify", mock)
 

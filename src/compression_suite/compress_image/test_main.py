@@ -15,11 +15,10 @@ TEST_IMAGE = Path(__file__).resolve().parent / "samples" / "photo.jpg"
 
 
 def _mock_tinify():
-    """Patch tinify so from_file/from_buffer return the real test image bytes."""
+    """Patch tinify so from_buffer returns the real test image bytes."""
     mock = MagicMock()
     source = MagicMock()
     source.to_buffer.return_value = TEST_IMAGE.read_bytes()
-    mock.from_file.return_value = source
     mock.from_buffer.return_value = source
     mock.compression_count = 42
     return patch("compression_suite.compress_image.main.tinify", mock)

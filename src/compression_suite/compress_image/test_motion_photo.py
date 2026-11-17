@@ -90,7 +90,6 @@ def _fake_tinify(reencode: bool = False, tail: bytes = b""):
         source.to_buffer.return_value = (_reencode_like_tinify(data) if reencode else data) + tail
         return source
 
-    mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
     mock.from_buffer.side_effect = make_source
     return patch("compression_suite.compress_image.main.tinify", mock)
 
@@ -249,7 +248,7 @@ def test_samsung_motion_photo_keeps_its_video(tmp_path: Path, sample: Path, sign
     out = tmp_path / "out.jpg"
     result, fake = _invoke(sample, out, reencode=True)
     assert _motion_photo_result(result) == {"detected": True, "signals": signals, "video_kept": True}
-    assert fake.from_file.called
+    assert fake.from_buffer.called
     original, compressed = sample.read_bytes(), out.read_bytes()
     assert _samsung_video(compressed) == _samsung_video(original)
     # The zone, appended right after the image, comes out of the exiftool copy intact
@@ -403,7 +402,7 @@ def test_motion_photo_whose_zone_cant_be_appended_reports_the_lost_video(tmp_pat
 def test_s23_photo_with_seft_zone_without_motion_photo_is_accepted(tmp_path: Path):
     result, fake = _invoke(S23_PHOTO, tmp_path / "out.jpg")
     assert _motion_photo_result(result) == NO_MOTION_PHOTO
-    assert fake.from_file.called
+    assert fake.from_buffer.called
 
 
 def test_s23_photo_zone_is_appended_and_its_fields_kept(tmp_path: Path):
@@ -560,7 +559,7 @@ def test_allow_motion_photo_loss_compresses_and_reports_the_signals(tmp_path: Pa
         "signals": ["xmp_google_motion_photo", "xmp_container_video"],
         "video_kept": False,
     }
-    assert fake.from_file.called
+    assert fake.from_buffer.called
     assert out.exists()
 
 
