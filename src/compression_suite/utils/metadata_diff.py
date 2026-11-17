@@ -8,6 +8,7 @@ The module is generic: a command passes its own expected losses. The important f
 a video's, and its diff, are in utils.video_metadata, on top of `classify_losses`.
 """
 
+import io
 import json
 import subprocess
 from collections.abc import Callable
@@ -171,10 +172,10 @@ def read_metadata(exiftool: Path, path: Path) -> dict[str, Any]:
     }
 
 
-def pixel_transparency(path: Path) -> bool | None:
+def pixel_transparency(source: Path | bytes) -> bool | None:
     """Whether at least one pixel of the image is not fully opaque, or None if Pillow can't decode it."""
     try:
-        with Image.open(path) as image:
+        with Image.open(source if isinstance(source, Path) else io.BytesIO(source)) as image:
             if image.mode not in ("RGBA", "LA", "PA", "La", "RGBa") and "transparency" not in image.info:
                 return False
             return image.convert("RGBA").getchannel("A").getextrema()[0] < 255

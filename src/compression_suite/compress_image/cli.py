@@ -58,8 +58,9 @@ def compress_image(
 
     With --format jpeg, a PNG is converted to JPEG locally, then compressed by Tinify like any JPEG: one compression,
     as for any call. A JPEG input is compressed as is; any other format is refused before Tinify. The PNG's metadata
-    is copied into the JPEG, and the PNG encoding fields are reported as expected losses. --output is taken as given,
-    whatever its extension.
+    is copied into the JPEG, and the PNG encoding fields are reported as expected losses. A PNG with at least one
+    pixel not fully opaque is refused before Tinify (transparent_input): JPEG has no transparency, and it is never
+    flattened onto a background. --output is taken as given, whatever its extension.
 
     The conversion runs with Pillow, already a pinned dependency. Not with Tinify's own convert, which costs one more
     compression per image; not with ImageMagick, a system tool with a long history of decoder vulnerabilities. The

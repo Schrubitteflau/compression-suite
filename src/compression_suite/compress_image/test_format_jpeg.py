@@ -21,6 +21,9 @@ runner = CliRunner()
 SAMPLES = Path(__file__).resolve().parent / "samples"
 OPAQUE_PHOTO = SAMPLES / "opaque_photo.png"
 PHOTO_JPEG = SAMPLES / "photo.jpg"
+OPAQUE_RGBA = SAMPLES / "opaque_rgba.png"
+TRANSPARENT_PIXEL = SAMPLES / "transparent_pixel.png"
+TRUNCATED = SAMPLES / "truncated.png"
 
 
 def _echo_tinify():
@@ -215,3 +218,60 @@ def test_without_format_a_png_stays_a_png(tmp_path: Path):
     assert result.exit_code == 0, result.output
     fake.from_buffer.assert_called_once_with(OPAQUE_PHOTO.read_bytes())
     assert json.loads(result.stdout)["result"]["output"]["format"] == "png"
+
+
+# --- Transparency and damaged PNGs ----------------------------------------------
+
+
+def test_a_png_with_one_transparent_pixel_is_refused_before_tinify(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with _echo_tinify() as fake:
+        result = _invoke(str(TRANSPARENT_PIXEL), "--format", "jpeg", "--output", str(out_dir / "out.jpg"), "--json")
+    assert result.exit_code == 28, result.output
+    assert _error(result)["code"] == "transparent_input"
+    assert not fake.from_buffer.called
+    assert list(out_dir.iterdir()) == []
+
+
+def test_a_rgba_png_whose_pixels_are_all_opaque_becomes_an_rgb_jpeg(tmp_path: Path):
+    out = tmp_path / "photo.jpg"
+    with _echo_tinify() as fake:
+        result = _invoke(str(OPAQUE_RGBA), "--format", "jpeg", "--output", str(out), "--json")
+    assert result.exit_code == 0, result.output
+    fake.from_buffer.assert_called_once()
+    with Image.open(out) as image:
+        assert (image.format, image.mode) == ("JPEG", "RGB")
+    transparency = {field["key"]: field for field in json.loads(result.stdout)["result"]["metadata"]["important"]}
+    assert transparency["transparency"]["status"] == "same"
+
+
+def test_a_truncated_png_is_input_corrupt_before_tinify(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with _echo_tinify() as fake:
+        result = _invoke(str(TRUNCATED), "--format", "jpeg", "--output", str(out_dir / "out.jpg"), "--json")
+    assert result.exit_code == 27, result.output
+    assert _error(result)["code"] == "input_corrupt"
+    assert not fake.from_buffer.called
+    assert list(out_dir.iterdir()) == []
+
+
+def test_a_transparent_png_from_stdin_is_refused_too():
+    with _echo_tinify() as fake:
+        result = _invoke("--format", "jpeg", input=TRANSPARENT_PIXEL.read_bytes())
+    assert result.exit_code == 28
+    assert not fake.from_buffer.called
+    assert result.stdout_bytes == b""
+
+
+def test_without_format_a_transparent_png_is_compressed_as_a_png_keeping_its_transparency(tmp_path: Path):
+    out = tmp_path / "out.png"
+    with _echo_tinify() as fake:
+        result = _invoke(str(TRANSPARENT_PIXEL), "--output", str(out), "--json")
+    assert result.exit_code == 0, result.output
+    fake.from_buffer.assert_called_once_with(TRANSPARENT_PIXEL.read_bytes())
+    res = json.loads(result.stdout)["result"]
+    assert res["output"]["format"] == "png"
+    important = {field["key"]: field for field in res["metadata"]["important"]}
+    assert (important["transparency"]["before"], important["transparency"]["status"]) == (True, "same")

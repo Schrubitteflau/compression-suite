@@ -370,6 +370,17 @@ def read_original(input_file: str | None, disable_hard_limit: bool, supported_fo
     return Original(path=path, stat=stat, data=data, format=input_format)
 
 
+def check_opaque(png: bytes) -> None:
+    """Refuse a PNG with at least one pixel not fully opaque: JPEG has no transparency, and flattening it onto a
+    background would change the picture. The caller compresses it without --format instead."""
+    if pixel_transparency(png):
+        raise CommandError(
+            ErrorCode.TRANSPARENT_INPUT,
+            "Transparent PNG: at least one pixel is not fully opaque, and JPEG has no transparency. "
+            "Compress it without --format to keep it a PNG.",
+        )
+
+
 def convert_to_jpeg(png: bytes) -> bytes:
     """Encode the PNG's pixels as a JPEG, with its ICC profile and no other metadata (copied from the PNG later on)."""
     with Image.open(io.BytesIO(png)) as image:
@@ -469,6 +480,8 @@ def compress_image(
     # The bytes Tinify compresses, kept apart from the original, which stays the source of the metadata copy, the diff
     # and the comparisons: the original's own bytes, or a PNG converted to JPEG.
     converted = output_format == "jpeg" and original.format == "png"
+    if converted:
+        check_opaque(original.data)
     tinify_input = convert_to_jpeg(original.data) if converted else original.data
 
     with file_on_disk(original.path, original.data, f".{original.format}") as exiftool_source:

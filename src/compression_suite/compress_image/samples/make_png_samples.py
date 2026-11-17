@@ -4,10 +4,14 @@
   stored in an `eXIf` chunk (`Make` TestCamera, `Model` TestModel, a capture date and a fake GPS position), an XMP
   packet (a keyword and a rating) and the P3 ICC profile of `s23_p3_seft.jpg`. Its picture is a gradient with
   ellipses, smooth enough to keep the file small, with saturated colours that the P3 profile changes.
+- `opaque_rgba.png`: the same picture in an RGBA PNG whose pixels are all fully opaque, like a screenshot with alpha.
+- `transparent_pixel.png`: `opaque_rgba.png` with one pixel fully transparent, the least a transparency can be.
+- `truncated.png`: an RGB PNG of the same picture cut in the middle of its pixel data, as by an interrupted sync.
 
 Run from the repo root: `uv run python src/compression_suite/compress_image/samples/make_png_samples.py`
 """
 
+import io
 import random
 from pathlib import Path
 
@@ -75,6 +79,15 @@ def main() -> None:
     picture(random.Random(SEED)).save(
         SAMPLES / "opaque_photo.png", exif=camera_exif(), icc_profile=p3_profile(), pnginfo=info
     )
+
+    rgba = picture(random.Random(SEED)).convert("RGBA")
+    rgba.save(SAMPLES / "opaque_rgba.png")
+    rgba.putpixel((0, 0), (0, 0, 0, 0))
+    rgba.save(SAMPLES / "transparent_pixel.png")
+
+    whole = io.BytesIO()
+    picture(random.Random(SEED)).save(whole, format="PNG")
+    (SAMPLES / "truncated.png").write_bytes(whole.getvalue()[: len(whole.getvalue()) // 2])
 
 
 if __name__ == "__main__":
