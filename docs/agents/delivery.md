@@ -17,13 +17,14 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 
 ## Off-limits
 
-- Real data: never written, moved or deleted. Read-only use allowed only for manual checks: copy one or two videos
-  from `~/Syncthing-shares/S23` and one iPhone HEIC from `~/Syncthing-shares/Xiaomi/Messages` into `/tmp`, work on the
-  copies, delete the copies at the end. Never touch the originals.
+- Real data: never written, moved or deleted. Read-only use allowed only for manual checks: copy one or two videos from
+  `~/Syncthing-shares/S23`, one iPhone HEIC from `~/Syncthing-shares/Xiaomi/Messages` and a few images (PNG, JPEG) from
+  `~/Syncthing-shares` into `/tmp`, work on the copies, delete the copies at the end. Never touch the originals.
 - The repo is public: no real file, extract, frame or metadata dump of a real file is ever committed. Test fixtures
   are fabricated by a versioned script. Nothing personal in issue comments: no GPS value, no real path, no image.
-- Paid services: no real Tinify call. Tests mock `tinify`. Never put a Tinify key anywhere; never run
-  `compress-image` on the real configuration.
+- Paid services: tests mock `tinify`. Manual checks may run `compress-image` on the real configuration, on fabricated
+  samples and on the real-file copies allowed above: Antoine accepts the credits a manual check needs. Never copy the
+  Tinify key anywhere.
 - Nothing outside this repo is modified: the caller's checkout is read-only for this work, and its dev server (port 27183) is never started or stopped.
 
 ## Branches and commits
@@ -44,7 +45,8 @@ Read by `/ship` and its subagents. Antoine's standing instructions for deliverin
 What the product really meets; reviewers judge `blocking` against it.
 
 - Caller: one desktop app, through the CLI in `--json` mode. No other caller.
-- Inputs: files from phones. Galaxy S23 videos (HEVC in MP4), iPhone HEIC photos, JPEG.
+- Inputs: files from phones and the desktop. Galaxy S23 videos (HEVC in MP4), iPhone HEIC photos, JPEG, PNG
+  screenshots and illustrations (opaque or transparent).
 - Some inputs are cut short, when a Syncthing sync was interrupted.
 - The caller runs several calls in parallel to prepare the next files (inspect, preview, display copy). It runs only one
   export at a time.
