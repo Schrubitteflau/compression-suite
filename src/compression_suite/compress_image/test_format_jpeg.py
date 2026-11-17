@@ -275,3 +275,70 @@ def test_without_format_a_transparent_png_is_compressed_as_a_png_keeping_its_tra
     assert res["output"]["format"] == "png"
     important = {field["key"]: field for field in res["metadata"]["important"]}
     assert (important["transparency"]["before"], important["transparency"]["status"]) == (True, "same")
+
+
+# --- Pixel modes ----------------------------------------------------------------
+# The mode samples are 256-column gradients: column `x` holds the 8-bit level `x`, `x * 257` on 16 bits
+# (make_png_samples.py).
+
+GRADIENT_ROW = 8
+
+
+def _converted_row(tmp_path: Path, name: str) -> tuple[str, list]:
+    """Convert the mode sample `name` and return the output's mode and the pixels of its middle row."""
+    out = tmp_path / f"{name}.jpg"
+    with _echo_tinify():
+        result = _invoke(str(SAMPLES / f"{name}.png"), "--format", "jpeg", "--output", str(out), "--json")
+    assert result.exit_code == 0, result.output
+    with Image.open(out) as image:
+        return image.mode, [image.getpixel((x, GRADIENT_ROW)) for x in range(image.width)]
+
+
+def _close(actual, expected, tolerance: int = 4) -> bool:
+    return all(abs(a - e) <= tolerance for a, e in zip(actual, expected, strict=True))
+
+
+@pytest.mark.parametrize("name", ["gray", "gray16", "gray16_alpha", "gray16_icc"])
+def test_grayscale_png_becomes_a_one_component_jpeg_with_its_gradient(tmp_path: Path, name: str):
+    mode, row = _converted_row(tmp_path, name)
+    assert mode == "L"
+    assert _close(row, range(256)), row
+
+
+@pytest.mark.parametrize("name", ["rgb16", "palette"])
+def test_16_bit_and_palette_png_become_an_rgb_jpeg_with_its_gradient(tmp_path: Path, name: str):
+    mode, row = _converted_row(tmp_path, name)
+    assert mode == "RGB"
+    # A palette of 64 colours rounds each level by up to 4 more
+    tolerance = 8 if name == "palette" else 4
+    assert all(_close(pixel, (x, 255 - x, 128), tolerance) for x, pixel in enumerate(row)), row
+
+
+@pytest.mark.parametrize(
+    ("name", "encoding"),
+    [
+        ("gray", {"PNG:BitDepth": 8, "PNG:ColorType": "Grayscale"}),
+        ("gray16", {"PNG:BitDepth": 16, "PNG:ColorType": "Grayscale"}),
+        ("rgb16", {"PNG:BitDepth": 16, "PNG:ColorType": "RGB"}),
+        ("palette", {"PNG:BitDepth": 8, "PNG:ColorType": "Palette", "PNG:Palette": None}),
+        (
+            "gray16_alpha",
+            {"PNG:BitDepth": 16, "PNG:ColorType": "Grayscale with Alpha", "PNG:SignificantBits": "16 16"},
+        ),
+    ],
+)
+def test_bit_depth_colour_type_and_palette_are_expected_losses_of_the_conversion(
+    tmp_path: Path, name: str, encoding: dict
+):
+    metadata = _convert(tmp_path, src=SAMPLES / f"{name}.png")["result"]["metadata"]
+    assert metadata["unexpected_losses"] == []
+    losses = {loss["tag"]: loss for loss in metadata["expected_losses"]}
+    for tag, before in encoding.items():
+        assert losses[tag]["reason"] == "format converti en JPEG"
+        if before is not None:
+            assert losses[tag]["before"] == before
+
+
+def test_16_bit_gray_png_with_a_gray_profile_keeps_its_colours(tmp_path: Path):
+    metadata = _convert(tmp_path, src=SAMPLES / "gray16_icc.png")["result"]["metadata"]
+    assert metadata["unexpected_losses"] == []
