@@ -1,5 +1,6 @@
 """Core logic for compress-image: Tinify API compression with metadata preservation."""
 
+import io
 import os
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import tinify
+from PIL import Image
 from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
@@ -49,6 +51,14 @@ T = TypeVar("T")
 HARD_LIMIT_BYTES = 15 * 1024 * 1024  # 15 MB
 
 SUPPORTED_FORMATS = ("jpeg", "png", "webp", "avif")
+
+# Inputs `--format jpeg` accepts: a PNG is converted, a JPEG compressed as is.
+JPEG_OUTPUT_INPUT_FORMATS = ("jpeg", "png")
+
+# Encoding of the JPEG a PNG is converted to before Tinify, not an option: why, and the measurements behind it, are in
+# the command's docstring (cli.py).
+JPEG_QUALITY = 92
+JPEG_SUBSAMPLING = "4:2:0"
 
 THUMBNAIL_REASON = "miniature EXIF retirée exprès : elle montrerait l'image d'origine"
 STRIP_REASON = "métadonnées retirées à la demande"
@@ -111,6 +121,24 @@ EXPECTED_LOSSES = [
 ]
 
 EXIFTOOL_EXCLUDE_TAGS = [f"-{loss.excluded_tag}=" for loss in EXPECTED_LOSSES if loss.excluded_tag]
+
+CONVERTED_REASON = "format converti en JPEG"
+
+# Losses of a PNG converted to JPEG: the fields of the PNG encoding, which a JPEG has no place for. Its dimensions are
+# compared as displayed, and its ICC profile is attached to the JPEG without the PNG's name for it.
+CONVERTED_LOSSES = [
+    ExpectedLoss(f"PNG:{name}", CONVERTED_REASON)
+    for name in (
+        "ImageWidth",
+        "ImageHeight",
+        "BitDepth",
+        "ColorType",
+        "Compression",
+        "Filter",
+        "Interlace",
+        "ProfileName",
+    )
+]
 
 MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
@@ -318,15 +346,16 @@ class Original:
         return len(self.data)
 
 
-def read_original(input_file: str | None, disable_hard_limit: bool) -> Original:
-    """Read the input from its path, or from stdin when None, rejecting what Tinify can't or shouldn't compress.
+def read_original(input_file: str | None, disable_hard_limit: bool, supported_formats: tuple[str, ...]) -> Original:
+    """Read the input from its path, or from stdin when None, rejecting what Tinify can't or shouldn't compress, and
+    any format but `supported_formats`.
 
     A file is checked for its format and size before it is read, so that a huge file is never loaded.
     """
     if input_file is None:
         data = sys.stdin.buffer.read()
         input_format = detect_format(data[:HEADER_SIZE])
-        check_format(input_format)
+        check_format(input_format, supported_formats)
         check_size(len(data), disable_hard_limit)
         check_decodable(data, input_format)
         return Original(path=None, stat=None, data=data, format=input_format)
@@ -334,11 +363,22 @@ def read_original(input_file: str | None, disable_hard_limit: bool) -> Original:
     path = validate_input_file(input_file)
     stat = path.stat()  # before any read, which may refresh the atime
     input_format = detect_file_format(path)
-    check_format(input_format)
+    check_format(input_format, supported_formats)
     check_size(stat.st_size, disable_hard_limit)
     data = path.read_bytes()
     check_decodable(path, input_format)  # Tinify would fail on it, or compress a broken image
     return Original(path=path, stat=stat, data=data, format=input_format)
+
+
+def convert_to_jpeg(png: bytes) -> bytes:
+    """Encode the PNG's pixels as a JPEG, with its ICC profile and no other metadata (copied from the PNG later on)."""
+    with Image.open(io.BytesIO(png)) as image:
+        icc_profile = image.info.get("icc_profile")
+        buf = io.BytesIO()
+        image.convert("RGB").save(
+            buf, format="JPEG", quality=JPEG_QUALITY, subsampling=JPEG_SUBSAMPLING, icc_profile=icc_profile
+        )
+    return buf.getvalue()
 
 
 @contextmanager
@@ -394,6 +434,7 @@ def compress_image(
     output: str | None,
     api_key: str | None,
     metadata: str,
+    output_format: str | None,
     overwrite: bool,
     disable_hard_limit: bool,
     allow_motion_photo_loss: bool,
@@ -408,6 +449,7 @@ def compress_image(
         output: Path to output file, or None for stdout.
         api_key: Tinify key, or None to read it from the configuration file.
         metadata: "keep" to preserve metadata via exiftool, "strip" to discard.
+        output_format: "jpeg" to convert a PNG to JPEG before Tinify, or None to keep the input's format.
         overwrite: Allow overwriting existing output file.
         disable_hard_limit: Bypass the 15MB hard limit.
         allow_motion_photo_loss: Compress a motion photo whose video can't be kept, losing its video.
@@ -422,10 +464,12 @@ def compress_image(
     if verbose:
         console.print(f"[dim]exiftool: {exiftool}[/dim]")
 
-    original = read_original(input_file, disable_hard_limit)
+    supported_formats = JPEG_OUTPUT_INPUT_FORMATS if output_format == "jpeg" else SUPPORTED_FORMATS
+    original = read_original(input_file, disable_hard_limit, supported_formats)
     # The bytes Tinify compresses, kept apart from the original, which stays the source of the metadata copy, the diff
-    # and the comparisons: today they are the original's own bytes.
-    tinify_input = original.data
+    # and the comparisons: the original's own bytes, or a PNG converted to JPEG.
+    converted = output_format == "jpeg" and original.format == "png"
+    tinify_input = convert_to_jpeg(original.data) if converted else original.data
 
     with file_on_disk(original.path, original.data, f".{original.format}") as exiftool_source:
         original_tags = read_metadata(exiftool, exiftool_source)
@@ -448,7 +492,8 @@ def compress_image(
         # None without a motion photo: there is no video to keep
         video_kept = (appended_buffer is not None) if motion_photo["detected"] else None
         motion_photo_exclusions = []
-        expected_losses = EXPECTED_LOSSES
+        conversion_losses = CONVERTED_LOSSES if converted else []
+        expected_losses = conversion_losses + EXPECTED_LOSSES
         if video_kept is False:
             motion_photo_exclusions = EXIFTOOL_MOTION_PHOTO_EXCLUDE_TAGS
             # Past the check, without a zone, the loss was allowed. A zone that couldn't be appended is unexpected.
@@ -517,7 +562,7 @@ def compress_image(
     metadata_diff = diff_metadata(
         original_tags,
         final_tags,
-        expected_losses if metadata == "keep" else [ExpectedLoss("*", STRIP_REASON)],
+        expected_losses if metadata == "keep" else [*conversion_losses, ExpectedLoss("*", STRIP_REASON)],
         transparency=(original_transparency, final_transparency),
         mtimes=(input_mtime, output_mtime) if input_mtime is not None and output_mtime is not None else None,
         same_picture=same_picture,
@@ -561,6 +606,7 @@ def main(
     output: str | None,
     api_key: str | None,
     metadata: str,
+    output_format: str | None,
     overwrite: bool,
     disable_hard_limit: bool,
     allow_motion_photo_loss: bool,
@@ -572,6 +618,7 @@ def main(
         output,
         api_key,
         metadata,
+        output_format,
         overwrite,
         disable_hard_limit,
         allow_motion_photo_loss,

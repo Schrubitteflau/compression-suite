@@ -33,13 +33,18 @@ def _open(source: Path | bytes) -> Image.Image:
     return Image.open(source if isinstance(source, Path) else io.BytesIO(source))
 
 
-def has_icc_profile(source: Path | bytes) -> bool:
-    """Whether the image carries an ICC profile, read without decoding the pixels; False if Pillow can't open it."""
+def _icc_profile(source: Path | bytes) -> bytes | None:
+    """The image's ICC profile, read without decoding the pixels; None without one or if Pillow can't open it."""
     try:
         with _open(source) as image:
-            return bool(image.info.get("icc_profile"))
+            return image.info.get("icc_profile") or None
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
-        return False
+        return None
+
+
+def has_icc_profile(source: Path | bytes) -> bool:
+    """Whether the image carries an ICC profile, read without decoding the pixels; False if Pillow can't open it."""
+    return _icc_profile(source) is not None
 
 
 def _srgb_copy(source: Path | bytes, use_profile: bool) -> tuple[Image.Image, float] | None:
@@ -80,8 +85,12 @@ def colors_converted(original: Path, compressed: bytes) -> bool:
     as sRGB. Tinify converted every P3 image of the real calls: a photo of dull colours, whose P3 and sRGB readings are
     close, is converted too. A profile that converts nothing (sRGB) may then be dropped, which changes no colour. False
     when they can't be compared, or either can't be decoded: the original's profile is copied back, as any other tag,
-    and colours displayed otherwise are caught by same_colors.
+    and colours displayed otherwise are caught by same_colors. False too when the compressed image still carries the
+    original's profile: nothing converted the pixels away from it (a PNG converted to JPEG locally, the profile
+    attached, which Tinify returned as is).
     """
+    if _icc_profile(compressed) == _icc_profile(original) is not None:
+        return False
     converted, raw = _srgb_copy(original, use_profile=True), _srgb_copy(original, use_profile=False)
     compressed_copy = _srgb_copy(compressed, use_profile=True)
     if converted is None or raw is None or compressed_copy is None:

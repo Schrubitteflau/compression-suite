@@ -33,6 +33,8 @@ FILE_GROUP_COMPARED_TAGS = ("File:ImageWidth", "File:ImageHeight", "File:Comment
 # Groups carrying the image dimensions, by format. They are compared as displayed (orientation applied): a change of
 # the displayed dimensions is never expected, whatever the command declares (even `--metadata strip`), the image must
 # keep its size. Stored dimensions swapped with the pixels by a quarter turn, the displayed ones kept, are expected.
+# Those of a group the output has no longer (a PNG converted to JPEG), the displayed ones kept, are lost as the command
+# declares them.
 DIMENSION_GROUPS = ("File", "PNG", "RIFF")
 DIMENSION_TAGS = tuple(f"{group}:{name}" for group in DIMENSION_GROUPS for name in ("ImageWidth", "ImageHeight"))
 ROTATED_DIMENSIONS_REASON = "pixels pivotés selon l'orientation : l'image affichée garde ses dimensions"
@@ -304,22 +306,36 @@ def _swapped_dimension_tags(before: dict[str, Any], after: dict[str, Any]) -> se
     return swapped
 
 
-def _never_expected_tags(transparency: tuple[bool | None, bool | None], swapped_dimensions: set[str]) -> set[str]:
-    """Tags whose loss is unexpected whatever the command declares: the dimensions unless swapped with the pixels, and
-    the alpha tags unless the original is known to be opaque or the output known to be transparent."""
-    never_expected = set(DIMENSION_TAGS) - swapped_dimensions
+def _converted_dimension_tags(before: dict[str, Any], after: dict[str, Any]) -> set[str]:
+    """The dimension tags of the groups the output has no longer, the displayed dimensions kept: the image was
+    converted to another format, without changing its size as displayed."""
+    if _field_value(DIMENSIONS_FIELD, before)[0] != _field_value(DIMENSIONS_FIELD, after)[0]:
+        return set()
+    after_groups = {tag.split(":", 1)[0] for tag in after}
+    return {tag for tag in DIMENSION_TAGS if tag in before and tag.split(":", 1)[0] not in after_groups}
+
+
+def _never_expected_tags(
+    transparency: tuple[bool | None, bool | None], swapped_dimensions: set[str], converted_dimensions: set[str]
+) -> set[str]:
+    """Tags whose loss is unexpected whatever the command declares: the dimensions unless swapped with the pixels or
+    gone with their format, and the alpha tags unless the original is known to be opaque or the output known to be
+    transparent."""
+    never_expected = set(DIMENSION_TAGS) - swapped_dimensions - converted_dimensions
     before, after = transparency
     if before is not False and after is not True:
         never_expected.update(ALPHA_TAGS)
     return never_expected
 
 
-def _expected_reason(tag: str, expected_losses: list[ExpectedLoss], never_expected: set[str]) -> str | None:
-    """The reason of a loss: that of dimensions swapped with the pixels (the only dimension tags not never expected),
-    of the first expected loss matching the tag, the `File` group's, or None if the loss is unexpected."""
+def _expected_reason(
+    tag: str, expected_losses: list[ExpectedLoss], never_expected: set[str], swapped_dimensions: set[str]
+) -> str | None:
+    """The reason of a loss: that of dimensions swapped with the pixels, of the first expected loss matching the tag,
+    the `File` group's, or None if the loss is unexpected."""
     if tag in never_expected:
         return None
-    if tag in DIMENSION_TAGS:
+    if tag in swapped_dimensions:
         return ROTATED_DIMENSIONS_REASON
     for loss in expected_losses:
         if fnmatchcase(tag, loss.pattern):
@@ -346,9 +362,10 @@ def diff_metadata(
     (`same_displayed_picture`), None when it wasn't checked. `same_colors` tells whether it displays it with the same
     colours (`same_colors`), None when it wasn't checked.
     """
-    never_expected = _never_expected_tags(transparency, _swapped_dimension_tags(before, after))
+    swapped_dimensions = _swapped_dimension_tags(before, after)
+    never_expected = _never_expected_tags(transparency, swapped_dimensions, _converted_dimension_tags(before, after))
     unexpected, expected = classify_losses(
-        before, after, lambda tag: _expected_reason(tag, expected_losses, never_expected)
+        before, after, lambda tag: _expected_reason(tag, expected_losses, never_expected, swapped_dimensions)
     )
     transparency_loss = _transparency_loss(transparency)
     if transparency_loss is not None:

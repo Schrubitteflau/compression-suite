@@ -39,7 +39,7 @@ Each runs with `--json`. The options listed are the ones the caller passes; `--h
 |---|---|---|
 | `inspect FILE` | none | [`inspect_file/`](../src/compression_suite/inspect_file/) |
 | `preview FILE` | `-o`, `--overwrite` | [`preview/`](../src/compression_suite/preview/) |
-| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss` | [`compress_image/`](../src/compression_suite/compress_image/) |
+| `compress-image FILE` | `--output`, `--overwrite`, `--metadata keep`, `--allow-motion-photo-loss`, `--format jpeg` | [`compress_image/`](../src/compression_suite/compress_image/) |
 | `video-presets` | none | [`utils/video_presets.py`](../src/compression_suite/utils/video_presets.py) |
 | `display-copy VIDEO` | `--output`, `--overwrite` | [`display_copy/`](../src/compression_suite/display_copy/) |
 | `preview-portion VIDEO` | `--preset`, `--crf`, `--start`, `--duration`, `--output` | [`preview_portion/`](../src/compression_suite/preview_portion/) |
