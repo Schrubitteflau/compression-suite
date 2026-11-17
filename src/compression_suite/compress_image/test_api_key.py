@@ -54,7 +54,7 @@ def _fake_tinify(output: bytes, error: BaseException | None = None):
     mock = MagicMock()
     mock.key = None
     mock.compression_count = 42
-    source = mock.from_file.return_value
+    source = mock.from_buffer.return_value
     source.to_buffer.return_value = output
     source.to_buffer.side_effect = error
     return patch("compression_suite.compress_image.main.tinify", mock)
@@ -76,7 +76,7 @@ def test_key_is_read_from_the_configuration_file(config_home: Path, tmp_path: Pa
     result, fake = _compress(tmp_path)
     assert result.exit_code == 0, result.output
     assert fake.key == FILE_KEY
-    assert fake.from_file.called
+    assert fake.from_buffer.called
 
 
 def test_api_key_flag_wins_over_the_file(config_home: Path, tmp_path: Path):
@@ -110,7 +110,7 @@ def test_no_key_is_api_key_missing_before_tinify(config_home: Path, tmp_path: Pa
     assert error["code"] == "api_key_missing"
     assert error["details"] == {"config_path": expected_path}
     assert expected_path in error["message"]
-    assert not fake.from_file.called
+    assert not fake.from_buffer.called
     assert not (tmp_path / "out.jpg").exists()
 
 
@@ -122,7 +122,7 @@ def test_empty_api_key_flag_is_api_key_missing(config_home: Path, tmp_path: Path
     error = json.loads(result.stdout)["error"]
     assert error["code"] == "api_key_missing"
     assert "--api-key" in error["message"]
-    assert not fake.from_file.called
+    assert not fake.from_buffer.called
 
 
 def test_relative_xdg_config_home_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -152,7 +152,7 @@ def test_unparsable_file_is_reported_without_its_content(config_home: Path, tmp_
     assert error["code"] == "api_key_missing"
     assert str(path) in error["message"]
     assert FILE_KEY not in result.output
-    assert not fake.from_file.called
+    assert not fake.from_buffer.called
 
 
 @pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o620, 0o602, 0o610, 0o601])

@@ -6,6 +6,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -252,10 +253,10 @@ def check_motion_photo(motion_photo: dict[str, Any], allow_motion_photo_loss: bo
         )
 
 
-def call_tinify(prepare_source: Callable[[], Any]) -> bytes:
-    """Run the Tinify compression, translating its exceptions into stable error codes."""
+def call_tinify(tinify_input: bytes) -> bytes:
+    """Compress `tinify_input` with Tinify, translating its exceptions into stable error codes."""
     try:
-        return prepare_source().to_buffer()
+        return tinify.from_buffer(tinify_input).to_buffer()
     except AccountError as e:
         if e.status == 429 or "limit" in str(e).lower():
             raise CommandError(ErrorCode.QUOTA_EXCEEDED, f"API quota exceeded: {e}") from e
@@ -298,6 +299,46 @@ def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise CommandError(ErrorCode.METADATA_COPY_FAILED, f"exiftool failed: {result.stderr.strip()}")
+
+
+@dataclass(frozen=True)
+class Original:
+    """The input image, read once: the source of the metadata copy, the metadata diff and every comparison.
+
+    `path` and `stat` are None when it came from stdin.
+    """
+
+    path: Path | None
+    stat: os.stat_result | None
+    data: bytes
+    format: str
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
+
+
+def read_original(input_file: str | None, disable_hard_limit: bool) -> Original:
+    """Read the input from its path, or from stdin when None, rejecting what Tinify can't or shouldn't compress.
+
+    A file is checked for its format and size before it is read, so that a huge file is never loaded.
+    """
+    if input_file is None:
+        data = sys.stdin.buffer.read()
+        input_format = detect_format(data[:HEADER_SIZE])
+        check_format(input_format)
+        check_size(len(data), disable_hard_limit)
+        check_decodable(data, input_format)
+        return Original(path=None, stat=None, data=data, format=input_format)
+
+    path = validate_input_file(input_file)
+    stat = path.stat()  # before any read, which may refresh the atime
+    input_format = detect_file_format(path)
+    check_format(input_format)
+    check_size(stat.st_size, disable_hard_limit)
+    data = path.read_bytes()
+    check_decodable(path, input_format)  # Tinify would fail on it, or compress a broken image
+    return Original(path=path, stat=stat, data=data, format=input_format)
 
 
 @contextmanager
@@ -381,37 +422,15 @@ def compress_image(
     if verbose:
         console.print(f"[dim]exiftool: {exiftool}[/dim]")
 
-    # Validate input and prepare API call (deferred to avoid burning a credit before checks)
-    original_path = None
-    original_stat = None
-    if input_file is not None:
-        original_path = validate_input_file(input_file)
-        original_stat = original_path.stat()  # before any read, which may refresh the atime
-        input_format = detect_file_format(original_path)
-        check_format(input_format)
-        input_size = original_stat.st_size
-        check_size(input_size, disable_hard_limit)
-        original_buffer = original_path.read_bytes()
-        check_decodable(original_path, input_format)  # Tinify would fail on it, or compress a broken image
+    original = read_original(input_file, disable_hard_limit)
+    # The bytes Tinify compresses, kept apart from the original, which stays the source of the metadata copy, the diff
+    # and the comparisons: today they are the original's own bytes.
+    tinify_input = original.data
 
-        def prepare_source() -> tinify.Source:
-            return tinify.from_file(str(original_path))
-
-    else:
-        original_buffer = sys.stdin.buffer.read()
-        input_format = detect_format(original_buffer[:HEADER_SIZE])
-        check_format(input_format)
-        input_size = len(original_buffer)
-        check_size(input_size, disable_hard_limit)
-        check_decodable(original_buffer, input_format)
-
-        def prepare_source() -> tinify.Source:
-            return tinify.from_buffer(original_buffer)
-
-    with file_on_disk(original_path, original_buffer, f".{input_format}") as exiftool_source:
+    with file_on_disk(original.path, original.data, f".{original.format}") as exiftool_source:
         original_tags = read_metadata(exiftool, exiftool_source)
-        motion_photo = detect_motion_photo(original_buffer, original_tags)
-        zone = zone_to_append(original_buffer, motion_photo, metadata)
+        motion_photo = detect_motion_photo(original.data, original_tags)
+        zone = zone_to_append(original.data, motion_photo, metadata)
         # The video of a motion photo whose zone is appended back is kept: there is no loss to allow
         check_motion_photo(motion_photo, allow_motion_photo_loss or zone is not None)
 
@@ -422,10 +441,10 @@ def compress_image(
         # tinify declares `key = None  # type: Optional[str]`, a type comment ty does not read
         tinify.key = resolve_api_key(api_key)  # ty: ignore[invalid-assignment]
 
-        compressed_buffer = call_tinify(prepare_source)
+        compressed_buffer = call_tinify(tinify_input)
 
         # Appended before the exiftool copy, which keeps the zone byte for byte
-        appended_buffer = append_zone(compressed_buffer, original_buffer, zone) if zone is not None else None
+        appended_buffer = append_zone(compressed_buffer, original.data, zone) if zone is not None else None
         # None without a motion photo: there is no video to keep
         video_kept = (appended_buffer is not None) if motion_photo["detected"] else None
         motion_photo_exclusions = []
@@ -472,8 +491,8 @@ def compress_image(
             final_transparency = pixel_transparency(compressed_path)
             same_picture = same_displayed_picture(exiftool_source, compressed_path) if oriented else None
             colors_kept = same_colors(exiftool_source, compressed_path) if same_picture is not False else None
-            if original_stat is not None:
-                os.utime(compressed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            if original.stat is not None:
+                os.utime(compressed_path, ns=(original.stat.st_atime_ns, original.stat.st_mtime_ns))
             return final_buffer, final_tags, final_transparency, same_picture, colors_kept
 
         output_buffer = appended_buffer if appended_buffer is not None else compressed_buffer
@@ -494,7 +513,7 @@ def compress_image(
             sys.stdout.buffer.write(final_buffer)
 
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
-    input_mtime = iso_mtime(original_stat) if original_stat is not None else None
+    input_mtime = iso_mtime(original.stat) if original.stat is not None else None
     metadata_diff = diff_metadata(
         original_tags,
         final_tags,
@@ -509,9 +528,9 @@ def compress_image(
     compression_count = tinify.compression_count
 
     # Report on stderr
-    ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
+    ratio = (1 - output_size / original.size) * 100 if original.size > 0 else 0
     console.print(
-        f"[bold green]Compressed:[/bold green] {input_size:,} → {output_size:,} bytes ({ratio:.1f}% reduction)"
+        f"[bold green]Compressed:[/bold green] {original.size:,} → {output_size:,} bytes ({ratio:.1f}% reduction)"
     )
     console.print(f"[dim]API compressions used this month: {compression_count}[/dim]")
     if metadata_diff["unexpected_losses"]:
@@ -521,8 +540,8 @@ def compress_image(
     return {
         "input": {
             "path": input_file,
-            "format": input_format,
-            "size_bytes": input_size,
+            "format": original.format,
+            "size_bytes": original.size,
             "mtime": input_mtime,
         },
         "output": {

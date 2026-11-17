@@ -48,7 +48,6 @@ def _fake_tinify(output: bytes | None = None, error: BaseException | None = None
             source.to_buffer.return_value = output if output is not None else data
         return source
 
-    mock.from_file.side_effect = lambda path: make_source(Path(path).read_bytes())
     mock.from_buffer.side_effect = make_source
     return patch("compression_suite.compress_image.main.tinify", mock)
 
@@ -102,6 +101,20 @@ def test_success_envelope_and_result(tmp_path: Path):
     assert res["input"] == {"path": str(src), "format": "jpeg", "size_bytes": src.stat().st_size}
     assert res["output"] == {"path": str(out), "format": "jpeg", "size_bytes": out.stat().st_size}
     assert res["tinify"] == {"compressions_this_month": 42}
+
+
+@pytest.mark.parametrize("from_stdin", [False, True])
+def test_tinify_gets_the_original_bytes_as_a_buffer(tmp_path: Path, from_stdin: bool):
+    original = _image_bytes("JPEG")
+    src = tmp_path / "photo.jpg"
+    src.write_bytes(original)
+    out = tmp_path / "out.jpg"
+    args = ("--output", str(out), "--json") if from_stdin else (str(src), "--output", str(out), "--json")
+    with _fake_tinify() as fake:
+        result = _invoke(*args, input=original if from_stdin else None)
+    assert result.exit_code == 0, result.output
+    fake.from_buffer.assert_called_once_with(original)
+    assert not fake.from_file.called
 
 
 def test_format_is_detected_on_content_not_extension(tmp_path: Path):
