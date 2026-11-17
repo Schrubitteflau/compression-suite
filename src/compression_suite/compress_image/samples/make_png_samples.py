@@ -4,6 +4,10 @@
   stored in an `eXIf` chunk (`Make` TestCamera, `Model` TestModel, a capture date and a fake GPS position), an XMP
   packet (a keyword and a rating) and the P3 ICC profile of `s23_p3_seft.jpg`. Its picture is a gradient with
   ellipses, smooth enough to keep the file small, with saturated colours that the P3 profile changes.
+- `text_blocks.png`: an opaque 8-bit RGB PNG with no EXIF and no XMP, only text blocks: one of every keyword that
+  has a standard equivalent in a JPEG (`Title`, `Description` as international text, `Author`, `Copyright`,
+  `Comment`, `Software`, `Creation Time`, its only date), an unknown keyword (`Mood`) and an international text
+  without equivalent (`Disclaimer`, in French).
 
 Run from the repo root: `uv run python src/compression_suite/compress_image/samples/make_png_samples.py`
 """
@@ -68,12 +72,30 @@ def p3_profile() -> bytes:
         return photo.info["icc_profile"]
 
 
+def text_blocks() -> PngImagePlugin.PngInfo:
+    """Text blocks of every keyword with a JPEG equivalent, plus two without."""
+    info = PngImagePlugin.PngInfo()
+    info.add_text("Title", "Sample title")
+    info.add_itxt("Description", "Été au bord de l'eau")
+    info.add_text("Author", "Test Author")
+    info.add_text("Copyright", "CC0 1.0")
+    info.add_text("Comment", "Fabricated for the compression-suite tests")
+    info.add_text("Software", "make_png_samples.py")
+    info.add_text("Creation Time", "2025:03:04 10:20:30")
+    info.add_text("Mood", "calm")
+    info.add_itxt("Disclaimer", "Image fabriquée", lang="fr", tkey="Avertissement")
+    return info
+
+
 def main() -> None:
     """Write the samples."""
     info = PngImagePlugin.PngInfo()
     info.add_itxt("XML:com.adobe.xmp", XMP)
     picture(random.Random(SEED)).save(
         SAMPLES / "opaque_photo.png", exif=camera_exif(), icc_profile=p3_profile(), pnginfo=info
+    )
+    picture(random.Random(SEED)).resize((WIDTH // 4, HEIGHT // 4)).save(
+        SAMPLES / "text_blocks.png", pnginfo=text_blocks()
     )
 
 

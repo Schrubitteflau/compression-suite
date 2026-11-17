@@ -19,6 +19,7 @@ from typing import Any
 from PIL import Image
 
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.dates import same_moment
 from compression_suite.utils.orientation import ORIENTATION_TAGS, displayed_size, orientation
 
 # Not metadata of the image: file system attributes, values computed by exiftool, exiftool's own version and warnings.
@@ -90,13 +91,16 @@ Candidate = str | dict[str, str]
 class ImportantField:
     """A field always shown first, read from the first candidate present.
 
-    A `displayed` field is a `{width, height}` given as displayed, swapped when the orientation turns the image.
+    A `displayed` field is a `{width, height}` given as displayed, swapped when the orientation turns the image. A
+    `date` field is the same when both values give the same moment, whatever their format (a PNG `Creation Time` in
+    ISO 8601, rewritten to XMP in exiftool's form).
     """
 
     key: str
     candidates: tuple[Candidate, ...]
     mtime_fallback: bool = False
     displayed: bool = False
+    date: bool = False
 
 
 DIMENSIONS_FIELD = ImportantField(
@@ -116,6 +120,7 @@ IMPORTANT_FIELDS = (
             "PNG:CreationTime",
         ),
         mtime_fallback=True,
+        date=True,
     ),
     ImportantField(
         "gps",
@@ -283,7 +288,9 @@ def _important_fields(
                 "before": before_value,
                 "after": after_value,
                 "source": source,
-                "status": field_status(before_value, after_value),
+                "status": "same"
+                if field.date and same_moment(before_value, after_value)
+                else field_status(before_value, after_value),
             }
         )
     fields.append(_transparency_field(transparency))
