@@ -27,6 +27,7 @@ from compression_suite.utils.colors import (
 )
 from compression_suite.utils.config import resolve_api_key
 from compression_suite.utils.contract import CommandError, ErrorCode
+from compression_suite.utils.dates import exif_date, parse_date, same_moment
 from compression_suite.utils.decoding import check_decodable
 from compression_suite.utils.formats import HEADER_SIZE, detect_file_format, detect_format
 from compression_suite.utils.metadata_diff import (
@@ -147,6 +148,24 @@ CONVERTED_LOSSES = [
         "SignificantBits",
     )
 ]
+
+# PNG text blocks with a standard equivalent in a JPEG, rewritten to it when a PNG is converted, so that photo managers
+# read them: `Group:Name` of the block as exiftool reads it -> `Group:Name` of its JPEG tag. Any other text block has
+# no place in a JPEG and is lost, unexpectedly. A block is never written over a tag the PNG holds in its EXIF or XMP,
+# which the photo manager that wrote it reads first. No date is ever derived from the file's mtime, nor guessed from a
+# `Creation Time` in free text.
+TEXT_BLOCK_TARGETS = {
+    "PNG:Title": "XMP-dc:Title",
+    "PNG:Description": "XMP-dc:Description",
+    "PNG:Author": "XMP-dc:Creator",
+    "PNG:Copyright": "XMP-dc:Rights",
+    "PNG:Comment": "File:Comment",
+    "PNG:Software": "IFD0:Software",
+    "PNG:CreationTime": "XMP-xmp:CreateDate",
+}
+
+CREATION_TIME = "PNG:CreationTime"
+
 
 MOTION_PHOTO_REASON = "photo animée : perte autorisée"
 
@@ -314,6 +333,45 @@ def applied_orientation_tags(original_tags: dict[str, Any], compressed: bytes) -
     assignments = [(tag, "1") for tag in ORIENTATION_TAGS]
     assignments += [(tag, str(width)) for tag in STORED_WIDTH_TAGS] + [(tag, str(height)) for tag in STORED_HEIGHT_TAGS]
     return [f"-{tag}#={value}" for tag, value in assignments if tag in original_tags]
+
+
+def text_block_tags(original_tags: dict[str, Any]) -> list[str]:
+    """exiftool assignments writing the PNG text blocks to their JPEG tags, applied after the copy.
+
+    Only into tags the PNG doesn't hold. A `Creation Time` is written only from a date in a recognised format, in
+    exiftool's form: given as is, exiftool would read the digits of any text as a date.
+    """
+    args = []
+    for block, target in TEXT_BLOCK_TARGETS.items():
+        if block not in original_tags or target in original_tags:
+            continue
+        if block == CREATION_TIME:
+            moment = parse_date(original_tags[block])
+            if moment is not None:
+                args.append(f"-{target}={exif_date(moment)}")
+        else:
+            args.append(f"-{target}<{block}")
+    return args
+
+
+def rewritten_text_blocks(original_tags: dict[str, Any], final_tags: dict[str, Any]) -> list[ExpectedLoss]:
+    """The losses of the PNG text blocks rewritten to their JPEG tag, each with a reason naming it.
+
+    A block is rewritten when its tag reads back its value (the same moment, for a date). A value exiftool couldn't
+    write whole (a comment too long for a JPEG), or a tag of the PNG holding another value, leaves the block an
+    unexpected loss.
+    """
+    return [
+        ExpectedLoss(block, f"bloc texte PNG réécrit en {target}")
+        for block, target in TEXT_BLOCK_TARGETS.items()
+        if block in original_tags
+        and target in final_tags
+        and (
+            same_moment(original_tags[block], final_tags[target])
+            if block == CREATION_TIME
+            else str(final_tags[target]) == str(original_tags[block])
+        )
+    ]
 
 
 def preserve_metadata(exiftool: Path, original_path: Path, compressed_path: Path, extra_args: list[str]):
@@ -543,6 +601,8 @@ def compress_image(
         if pixels_turned:
             expected_losses = ORIENTATION_APPLIED_LOSSES + expected_losses
 
+        text_block_args = text_block_tags(original_tags) if converted else []
+
         # Only a profile can have converted the colours; with --metadata strip, no profile is copied back
         colors_args = []
         if (
@@ -565,7 +625,10 @@ def compress_image(
             """
             if metadata == "keep":
                 preserve_metadata(
-                    exiftool, exiftool_source, compressed_path, motion_photo_exclusions + orientation_args + colors_args
+                    exiftool,
+                    exiftool_source,
+                    compressed_path,
+                    motion_photo_exclusions + orientation_args + colors_args + text_block_args,
                 )
             final_buffer = compressed_path.read_bytes()
             final_tags = read_metadata(exiftool, compressed_path)
@@ -595,6 +658,8 @@ def compress_image(
 
     output_mtime = iso_mtime(output_path.stat()) if output_path is not None else None
     input_mtime = iso_mtime(original.stat) if original.stat is not None else None
+    if converted and metadata == "keep":
+        expected_losses = rewritten_text_blocks(original_tags, final_tags) + expected_losses
     metadata_diff = diff_metadata(
         original_tags,
         final_tags,
