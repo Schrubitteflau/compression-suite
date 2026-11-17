@@ -4,11 +4,20 @@
   stored in an `eXIf` chunk (`Make` TestCamera, `Model` TestModel, a capture date and a fake GPS position), an XMP
   packet (a keyword and a rating) and the P3 ICC profile of `s23_p3_seft.jpg`. Its picture is a gradient with
   ellipses, smooth enough to keep the file small, with saturated colours that the P3 profile changes.
+- `gray.png`, `gray16.png`, `rgb16.png`, `palette.png`: the pixel modes other than 8-bit RGB, without metadata. Each
+  is 256 columns wide, column `x` holding the 8-bit level `x` (on 16 bits, `x * 257`, so that the 16-bit gradient spans
+  the whole range): `gray.png` 8-bit grayscale, `gray16.png` 16-bit grayscale, `rgb16.png` 16-bit RGB (red rising,
+  green falling, blue at half), `palette.png` the colours of `rgb16.png` on 8 bits in a palette of 64 entries.
+- `gray16_alpha.png`: the gradient of `gray16.png` with a 16-bit alpha channel, fully opaque, and an `sBIT` chunk,
+  which Pillow opens as RGBA.
+- `gray16_icc.png`: `gray16.png` with a grey ICC profile (gamma 2.2), fabricated here.
 
 Run from the repo root: `uv run python src/compression_suite/compress_image/samples/make_png_samples.py`
 """
 
 import random
+import struct
+import zlib
 from pathlib import Path
 
 from PIL import Image, ImageDraw, PngImagePlugin
@@ -68,6 +77,91 @@ def p3_profile() -> bytes:
         return photo.info["icc_profile"]
 
 
+GRADIENT_WIDTH, GRADIENT_HEIGHT = 256, 16
+
+
+def gradient_rgb(x: int) -> tuple[int, int, int]:
+    """The 8-bit colour of column `x` of `rgb16.png` and `palette.png`."""
+    return x, 255 - x, 128
+
+
+def gray16() -> Image.Image:
+    """A 16-bit grayscale gradient, column `x` at `x * 257`."""
+    image = Image.new("I;16", (GRADIENT_WIDTH, GRADIENT_HEIGHT))
+    image.putdata([x * 257 for _ in range(GRADIENT_HEIGHT) for x in range(GRADIENT_WIDTH)])
+    return image
+
+
+def png_by_hand(colour_type: int, samples: list[tuple[int, ...]], chunks: list[tuple[bytes, bytes]]) -> bytes:
+    """A 16-bit PNG of the gradient, `samples[x]` the 16-bit samples of column `x`, with `chunks` before its pixels,
+    written by hand: Pillow can't write a 16-bit PNG with colour."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    row = b"".join(struct.pack(f">{len(sample)}H", *sample) for sample in samples)
+    pixels = b"".join(b"\0" + row for _ in range(GRADIENT_HEIGHT))  # filter type 0 on each row
+    header = struct.pack(">IIBBBBB", GRADIENT_WIDTH, GRADIENT_HEIGHT, 16, colour_type, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + b"".join(chunk(kind, data) for kind, data in chunks)
+        + chunk(b"IDAT", zlib.compress(pixels, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def rgb16_png() -> bytes:
+    """A 16-bit RGB PNG of the gradient, each level at `level * 257`."""
+    return png_by_hand(2, [tuple(level * 257 for level in gradient_rgb(x)) for x in range(GRADIENT_WIDTH)], [])
+
+
+def gray16_alpha_png() -> bytes:
+    """A 16-bit grey and alpha PNG of the gradient, fully opaque, with an `sBIT` chunk (16 significant bits each)."""
+    return png_by_hand(4, [(x * 257, 65535) for x in range(GRADIENT_WIDTH)], [(b"sBIT", bytes((16, 16)))])
+
+
+def gray_profile() -> bytes:
+    """A minimal ICC v2 grey display profile, gamma 2.2: no grey profile ships with Pillow."""
+
+    def xyz(x: float, y: float, z: float) -> bytes:
+        return struct.pack(">3i", *(round(v * 65536) for v in (x, y, z)))
+
+    name = b"compression-suite gray gamma 2.2\0"
+    tags = [
+        (b"desc", b"desc" + bytes(4) + struct.pack(">I", len(name)) + name + bytes(4 + 4 + 2 + 1 + 67)),
+        (b"wtpt", b"XYZ " + bytes(4) + xyz(0.9642, 1.0, 0.8249)),
+        (b"kTRC", b"curv" + bytes(4) + struct.pack(">IH", 1, round(2.2 * 256)) + bytes(2)),
+        (b"cprt", b"text" + bytes(4) + b"No copyright, use freely\0"),
+    ]
+    table_size = 4 + 12 * len(tags)
+    offset, table, data = 128 + table_size, struct.pack(">I", len(tags)), b""
+    for signature, tag in tags:
+        tag += bytes(-len(tag) % 4)  # tags aligned on 4 bytes
+        table += signature + struct.pack(">II", offset + len(data), len(tag))
+        data += tag
+    size = 128 + table_size + len(data)
+    header = (
+        struct.pack(">I", size)
+        + bytes(4)
+        + bytes((2, 0x10, 0, 0))  # version 2.1
+        + b"mntrGRAYXYZ "
+        + bytes(12)  # creation date
+        + b"acsp"
+        + bytes(4 + 4 + 4 + 4 + 8 + 4)  # platform, flags, manufacturer, model, attributes, intent
+        + xyz(0.9642, 1.0, 0.8249)  # PCS illuminant, D50
+        + bytes(4 + 16 + 28)  # creator, ID, reserved
+    )
+    return header + table + data
+
+
+def palette() -> Image.Image:
+    """The gradient of `rgb16.png` on 8 bits, in a palette of 64 colours."""
+    image = Image.new("RGB", (GRADIENT_WIDTH, GRADIENT_HEIGHT))
+    image.putdata([gradient_rgb(x) for _ in range(GRADIENT_HEIGHT) for x in range(GRADIENT_WIDTH)])
+    return image.quantize(64)
+
+
 def main() -> None:
     """Write the samples."""
     info = PngImagePlugin.PngInfo()
@@ -75,6 +169,12 @@ def main() -> None:
     picture(random.Random(SEED)).save(
         SAMPLES / "opaque_photo.png", exif=camera_exif(), icc_profile=p3_profile(), pnginfo=info
     )
+    Image.linear_gradient("L").rotate(90).resize((GRADIENT_WIDTH, GRADIENT_HEIGHT)).save(SAMPLES / "gray.png")
+    gray16().save(SAMPLES / "gray16.png")
+    (SAMPLES / "rgb16.png").write_bytes(rgb16_png())
+    (SAMPLES / "gray16_alpha.png").write_bytes(gray16_alpha_png())
+    gray16().save(SAMPLES / "gray16_icc.png", icc_profile=gray_profile())
+    palette().save(SAMPLES / "palette.png")
 
 
 if __name__ == "__main__":

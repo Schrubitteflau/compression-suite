@@ -18,7 +18,13 @@ from rich.console import Console
 from tinify import AccountError, ClientError, ServerError
 from tinify import ConnectionError as TinifyConnectionError
 
-from compression_suite.utils.colors import colors_converted, has_icc_profile, same_colors
+from compression_suite.utils.colors import (
+    SIXTEEN_BIT_GRAY_MODES,
+    colors_converted,
+    eight_bit_gray,
+    has_icc_profile,
+    same_colors,
+)
 from compression_suite.utils.config import resolve_api_key
 from compression_suite.utils.contract import CommandError, ErrorCode
 from compression_suite.utils.decoding import check_decodable
@@ -136,7 +142,9 @@ CONVERTED_LOSSES = [
         "Compression",
         "Filter",
         "Interlace",
+        "Palette",
         "ProfileName",
+        "SignificantBits",
     )
 ]
 
@@ -370,12 +378,27 @@ def read_original(input_file: str | None, disable_hard_limit: bool, supported_fo
     return Original(path=path, stat=stat, data=data, format=input_format)
 
 
+# The PNG colour types of grey pixels, without and with alpha (opaque, else refused), read in the IHDR chunk, after the
+# signature (8 bytes), the chunk's length and type (8), the width and height (8) and the bit depth (1). Pillow's mode
+# doesn't tell them: it opens a 16-bit grey and alpha PNG as RGBA.
+GRAY_COLOUR_TYPES = (0, 4)
+COLOUR_TYPE_OFFSET = 25
+
+
+def jpeg_pixels(image: Image.Image, gray: bool) -> Image.Image:
+    """The PNG's pixels on 8 bits, in the mode of the JPEG: one component for a grey PNG (8 or 16 bits, alpha or not),
+    RGB for any other (16-bit RGB, palette, opaque alpha). Pillow already reads a 16-bit RGB PNG on 8 bits."""
+    if not gray:
+        return image.convert("RGB")
+    return eight_bit_gray(image) if image.mode in SIXTEEN_BIT_GRAY_MODES else image.convert("L")
+
+
 def convert_to_jpeg(png: bytes) -> bytes:
     """Encode the PNG's pixels as a JPEG, with its ICC profile and no other metadata (copied from the PNG later on)."""
     with Image.open(io.BytesIO(png)) as image:
         icc_profile = image.info.get("icc_profile")
         buf = io.BytesIO()
-        image.convert("RGB").save(
+        jpeg_pixels(image, png[COLOUR_TYPE_OFFSET] in GRAY_COLOUR_TYPES).save(
             buf, format="JPEG", quality=JPEG_QUALITY, subsampling=JPEG_SUBSAMPLING, icc_profile=icc_profile
         )
     return buf.getvalue()

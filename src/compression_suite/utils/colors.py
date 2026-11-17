@@ -24,9 +24,18 @@ SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
 COMPARED_SIZE = (32, 32)
 SAME_COLORS_MAX_DIFFERENCE = 1.5
 
-# Modes an ICC profile can describe as they are; any other (palette, alpha, 16-bit grey) is flattened on white first,
-# to RGB or to grey (L) as its base mode, which a grey profile still describes.
+# Modes an ICC profile can describe as they are; 16-bit grey is scaled to 8 bits (L), any other (palette, alpha) is
+# flattened on white first, to RGB or to grey (L) as its base mode, which a grey profile still describes.
 PROFILED_MODES = ("RGB", "L", "CMYK")
+
+# Pillow's modes of 16-bit grey pixels
+SIXTEEN_BIT_GRAY_MODES = ("I", "I;16", "I;16B", "I;16L")
+
+
+def eight_bit_gray(image: Image.Image) -> Image.Image:
+    """16-bit grey pixels on 8 bits (L), each level scaled and rounded: Pillow's own conversion clips every level
+    above 255 to white."""
+    return image.convert("I").point(lambda level: level * (1 / 257) + 0.5).convert("L")
 
 
 def _open(source: Path | bytes) -> Image.Image:
@@ -58,6 +67,8 @@ def _srgb_copy(source: Path | bytes, use_profile: bool) -> tuple[Image.Image, fl
             icc_profile = image.info.get("icc_profile") if use_profile else None
             image.draft("RGB", (COMPARED_SIZE[0] * 8, COMPARED_SIZE[1] * 8))
             pixels = ImageOps.exif_transpose(image)
+            if pixels.mode in SIXTEEN_BIT_GRAY_MODES:
+                pixels = eight_bit_gray(pixels)
             if pixels.mode not in PROFILED_MODES:
                 pixels = Image.alpha_composite(Image.new("RGBA", pixels.size, "white"), pixels.convert("RGBA"))
                 pixels = pixels.convert(Image.getmodebase(image.mode))
